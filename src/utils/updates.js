@@ -67,7 +67,19 @@ export async function checkForUpdates(source = DEFAULT_UPDATE_SOURCE) {
   const data = Array.isArray(releases)
     ? releases.find((r) => !r.prerelease && !r.draft)
     : null;
-  if (!data) throw new Error(`No stable release found on ${cfg.label}`);
+  if (!data) {
+    // A brand-new repository has no releases yet. That is not an error:
+    // report "up to date" so the UI does not show a scary failure.
+    return {
+      current: currentVersion,
+      latest: currentVersion,
+      url: cfg.fallbackUrl,
+      changelog: "",
+      assets: [],
+      hasUpdate: false,
+      sourceLabel: cfg.label,
+    };
+  }
 
   const latestRaw = (data.tag_name || "").replace(/^v/i, "");
   const latestParts = normaliseVersion(latestRaw);
