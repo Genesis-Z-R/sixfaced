@@ -4,7 +4,7 @@ A cross-platform Electron desktop app to stream and download movies, TV series a
 [![Release](https://img.shields.io/github/v/release/Genesis-Z-R/sixfaced?style=for-the-badge)](https://github.com/Genesis-Z-R/sixfaced/releases)
 [![License](https://img.shields.io/badge/license-GPL--3.0-blue?style=for-the-badge)](LICENSE)
 
-![Logo](public/logo.svg)
+![Logo](public/logo.png)
 
 > **Sixfaced** is a personal fork of [Streambert](https://github.com/truelockmc/streambert) by **truelockmc**, rebranded and extended.
 > Both projects are free software under the GNU GPL v3. See [NOTICE](NOTICE) for attribution and a list of changes.
@@ -178,7 +178,7 @@ Project Root
 ├── public
 │   ├── icon.png
 │   ├── installer-sidebar.bmp
-│   └── logo.svg
+│   └── logo.png
 ├── screenshots
 │   ├── adblock.png
 │   ├── anime.png

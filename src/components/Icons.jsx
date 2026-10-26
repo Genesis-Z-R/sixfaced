@@ -1,6 +1,6 @@
 export const SixfacedLogo = ({ style }) => (
   <img
-    src="./logo.svg"
+    src="./logo.png"
     alt="Sixfaced"
     width="44"
     height="44"
