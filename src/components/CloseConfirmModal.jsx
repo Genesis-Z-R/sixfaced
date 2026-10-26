@@ -1,8 +1,10 @@
 import { DownloadIcon } from "./Icons";
+import { useModalKeys } from "../utils/useModalKeys";
 
 export default function CloseConfirmModal({ count, onConfirm, onCancel }) {
+  const modalRef = useModalKeys(onCancel);
   return (
-    <div className="close-confirm-overlay">
+    <div className="close-confirm-overlay" ref={modalRef}>
       <div className="close-confirm-modal">
         <div className="close-confirm-icon-wrap">
           <div className="close-confirm-icon-ring">

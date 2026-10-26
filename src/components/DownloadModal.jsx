@@ -1,3 +1,4 @@
+import { useModalKeys } from "../utils/useModalKeys";
 import { useState, useEffect, useCallback } from "react";
 import { CloseIcon, DownloadIcon, SettingsIcon, SubtitlesIcon } from "./Icons";
 import {
@@ -384,6 +385,8 @@ export default function DownloadModal({
   posterPath,
   tmdbId,
 }) {
+  const modalRef = useModalKeys(onClose);
+
   const [downloadPath, setDownloadPath] = useState(
     () => storage.get("downloadPath") || "",
   );
@@ -588,7 +591,7 @@ export default function DownloadModal({
   // ── No download path ───────────────────────────────────────────────────────
   if (!downloadPath || settingPath) {
     return (
-      <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-backdrop" ref={modalRef} onClick={onClose}>
         <div className="download-modal" onClick={(e) => e.stopPropagation()}>
           <div className="download-modal-header">
             <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -688,7 +691,7 @@ export default function DownloadModal({
   // ── Main modal ─────────────────────────────────────────────────────────────
   return (
     <>
-      <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal-backdrop" ref={modalRef} onClick={onClose}>
         <div className="download-modal" onClick={(e) => e.stopPropagation()}>
           <div className="download-modal-header">
             <span style={{ display: "flex", alignItems: "center", gap: 8 }}>

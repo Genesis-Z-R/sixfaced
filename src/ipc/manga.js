@@ -6,6 +6,8 @@ const { ipcMain } = require("electron");
 const axios = require("axios");
 const cheerio = require("cheerio");
 const { MANGA } = require("@consumet/extensions");
+const { LruCache } = require("./lruCache");
+const { assertPublicHttpUrl } = require("./netGuard");
 
 let _mangaPill = null;
 function getMangaPill() {
@@ -15,15 +17,18 @@ function getMangaPill() {
   return _mangaPill;
 }
 
-// In-memory cache with configurable TTL
-const _cache = new Map();
+// Bounded cache (TTL + LRU + byte budget). Image entries are base64 data URLs
+// and can be hundreds of KB each, so an unbounded Map is not an option.
+const _cache = new LruCache({
+  maxEntries: 150,
+  maxBytes: 40 * 1024 * 1024,
+  ttlMs: 60 * 60 * 1000,
+});
 function getCache(key, ttl = 10 * 60 * 1000) {
-  const item = _cache.get(key);
-  if (item && Date.now() - item.ts < ttl) return item.val;
-  return null;
+  return _cache.get(key, ttl);
 }
 function setCache(key, val) {
-  _cache.set(key, { val, ts: Date.now() });
+  _cache.set(key, val);
 }
 
 // Curated all-time popular manga on MangaPill as a baseline guaranteed set
@@ -403,6 +408,8 @@ function register() {
       const cacheKey = "img:" + url;
       const cached = getCache(cacheKey, 60 * 60 * 1000); // 1 hr cache
       if (cached) return { ok: true, dataUrl: cached };
+
+      await assertPublicHttpUrl(url);
 
       const res = await axios.get(url, {
         headers: {

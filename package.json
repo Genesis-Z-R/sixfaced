@@ -9,9 +9,13 @@
   "license": "GPL-3.0",
   "main": "index.js",
   "private": true,
+  "engines": {
+    "node": ">=22.12.0"
+  },
   "scripts": {
     "dev": "vite build --watch",
     "start": "vite build && electron .",
+    "test": "node --test",
     "dist": "cross-env ELECTRON_DIST=1 vite build && npm run dist:linux && npm run dist:win && npm run dist:mac",
     "dist:linux": "cross-env ELECTRON_DIST=1 vite build && electron-builder --linux deb rpm AppImage pacman --publish never",
     "dist:deb": "cross-env ELECTRON_DIST=1 vite build && electron-builder --linux deb --publish never",
@@ -19,20 +23,25 @@
     "dist:arch": "cross-env ELECTRON_DIST=1 vite build && electron-builder --linux pacman --publish never",
     "dist:appimage": "cross-env ELECTRON_DIST=1 vite build && electron-builder --linux AppImage --publish never",
     "dist:win": "cross-env ELECTRON_DIST=1 vite build && electron-builder --win --publish never",
-    "dist:mac": "cross-env ELECTRON_DIST=1 vite build && electron-builder --mac --universal --publish never"
+    "dist:mac": "cross-env ELECTRON_DIST=1 vite build && electron-builder --mac --universal --publish never",
+    "lint": "eslint src index.js preload.js player-preload.js popout-preload.js"
   },
   "dependencies": {
     "@consumet/extensions": "^1.8.8",
-    "approve": "^0.0.12",
+    "axios": "^1.20.0",
+    "cheerio": "^1.2.0",
     "react": "^18.2.0",
-    "react-dom": "^18.2.0",
-    "scripts": "^0.1.0"
+    "react-dom": "^18.2.0"
   },
   "devDependencies": {
     "@vitejs/plugin-react": "^4.7.0",
     "cross-env": "^7.0.3",
     "electron": "^40.4.1",
     "electron-builder": "^26.7.0",
+    "eslint": "^9.39.5",
+    "eslint-plugin-react": "^7.37.5",
+    "eslint-plugin-react-hooks": "^5.2.0",
+    "globals": "^15.15.0",
     "terser": "^5.46.0",
     "vite": "^7.3.1"
   },
@@ -181,9 +190,6 @@
     "electronLanguages": [
       "en-US",
       "de"
-    ],
-    "asarUnpack": [
-      "src/styles/fonts/**"
     ]
   },
   "allowScripts": {

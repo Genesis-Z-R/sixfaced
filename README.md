@@ -175,7 +175,7 @@ This application is provided "as is" for educational purposes. The developer:
 ```
 Project Root
 ├── index.html
-├── main.js
+├── index.js
 ├── package.json
 ├── preload.js
 ├── vite.config.js
@@ -216,7 +216,6 @@ Project Root
     │   ├── Sidebar.jsx
     │   ├── SubtitleDownloaderModal.jsx
     │   ├── TrailerModal.jsx
-    │   ├── TrendingCarousel.jsx
     │   ├── UpdateModal.jsx
     │   └── WindowTitlebar.jsx
     ├── ipc
@@ -229,7 +228,7 @@ Project Root
     ├── pages
     │   ├── DownloadsPage.jsx
     │   ├── HomePage.jsx
-    │   ├── LibraryPage.jsx
+    │   ├── MediaHubPage.jsx
     │   ├── MoviePage.jsx
     │   ├── SettingsPage.jsx
     │   └── TVPage.jsx

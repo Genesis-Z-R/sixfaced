@@ -16,6 +16,14 @@ import {
   PlayIcon,
   BackIcon,
 } from "../components/Icons";
+import UpdatesFeed from "../components/UpdatesFeed";
+import { useUpdatesFeed } from "../utils/useUpdatesFeed";
+import {
+  computeMangaUpdate,
+  countWithUpdates,
+  parseChapterNumber,
+  sortUpdates,
+} from "../utils/updatesCalc";
 
 export default function MangaPage({
   onBookmark,
@@ -47,6 +55,7 @@ export default function MangaPage({
 
   // Reader state
   const [readingChapter, setReadingChapter] = useState(null);
+  const detailsRequestRef = useRef(0);
 
   // Resume progress tracking for selected title
   const lastRead = useMemo(() => {
@@ -160,6 +169,7 @@ export default function MangaPage({
   // ── Fetch Details & Chapters when a manga is selected ───────────────────────
   const handleSelectManga = useCallback(
     (manga) => {
+      const requestId = ++detailsRequestRef.current;
       setSelectedManga(manga);
       setDetails(null);
       setChapters([]);
@@ -169,6 +179,9 @@ export default function MangaPage({
         getMangaDetails(manga.id, manga.title || manga.name).catch(() => manga),
         getMangaChapters(manga.id, "asc", manga.title || manga.name).catch(() => []),
       ]).then(([det, chaps]) => {
+        // A slower response for a previously-selected title must not overwrite
+        // the title the user is actually looking at.
+        if (detailsRequestRef.current !== requestId) return;
         setDetails(det);
         setChapters(chaps);
         setLoadingDetails(false);
@@ -183,21 +196,36 @@ export default function MangaPage({
     }
   }, [initialManga, handleSelectManga]);
 
-  // Filter & sort chapters in details modal
-  const filteredChapters = chapters
-    .filter((c) => {
-      if (!chapterFilter.trim()) return true;
-      const q = chapterFilter.toLowerCase();
-      return (
-        String(c.chapter).toLowerCase().includes(q) ||
-        (c.title || "").toLowerCase().includes(q)
-      );
-    })
-    .sort((a, b) => {
-      const na = parseFloat(a.chapter) || 0;
-      const nb = parseFloat(b.chapter) || 0;
-      return chapterSort === "desc" ? nb - na : na - nb;
-    });
+  // Escape closes the details sheet when the reader is not covering it.
+  useEffect(() => {
+    if (!selectedManga || readingChapter) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape") setSelectedManga(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedManga, readingChapter]);
+
+  // Filter & sort chapters in details modal (memoized: 1000+ rows otherwise
+  // re-sort on every progress update while the reader is open underneath).
+  const filteredChapters = useMemo(
+    () =>
+      chapters
+        .filter((c) => {
+          if (!chapterFilter.trim()) return true;
+          const q = chapterFilter.toLowerCase();
+          return (
+            String(c.chapter).toLowerCase().includes(q) ||
+            (c.title || "").toLowerCase().includes(q)
+          );
+        })
+        .sort((a, b) => {
+          const na = parseFloat(a.chapter) || 0;
+          const nb = parseFloat(b.chapter) || 0;
+          return chapterSort === "desc" ? nb - na : na - nb;
+        }),
+    [chapters, chapterFilter, chapterSort],
+  );
 
   // Filter collections
   const mangaInProgress = inProgress.filter((i) => i && i.media_type === "manga");
@@ -206,9 +234,127 @@ export default function MangaPage({
   );
   const mangaHistory = history.filter((i) => i && i.media_type === "manga");
 
+  // ── Updates tab (bookmarked titles) ────────────────────────────────────────
+  const updatesEnabled = mangaSaved.length > 0;
+  const { state: updatesState, refresh: refreshUpdates } = useUpdatesFeed(
+    mangaSaved,
+    (item) => getMangaChapters(item.id, "desc", item.title || item.name),
+    updatesEnabled,
+  );
+
+  const openReaderAt = useCallback(
+    (item, chapter) => {
+      if (!item || !chapter) return;
+      if (!selectedManga || String(selectedManga.id) !== String(item.id)) {
+        handleSelectManga(item);
+      }
+      setReadingChapter(chapter);
+    },
+    [selectedManga, handleSelectManga],
+  );
+
+  const updateRows = useMemo(() => {
+    return (mangaSaved || []).map((item) => {
+      const key = `manga:${item.id}`;
+      const entry = updatesState[key];
+      const base = {
+        key,
+        item,
+        title: item.title || item.name || "Untitled",
+        status: "loading",
+        currentLabel: null,
+        latestLabel: null,
+        newCount: null,
+        progressPct: 0,
+        actions: [],
+      };
+      if (!entry || entry.status === "queued" || entry.status === "loading") {
+        return base;
+      }
+      if (entry.status === "error") {
+        return { ...base, status: "error", error: entry.error };
+      }
+
+      const chapters = Array.isArray(entry.data) ? entry.data : [];
+      const lastRead = mangaHistory.find(
+        (h) => String(h.id) === String(item.id),
+      );
+      const calc = computeMangaUpdate(chapters, lastRead);
+      const currentLabel = calc.current
+        ? `Ch. ${calc.current.chapter}`
+        : null;
+      const latestLabel = calc.latest ? `Latest Ch. ${calc.latest.chapter}` : "No chapters";
+      const progressPct = calc.current
+        ? Number(progress[`manga_${item.id}_c${calc.current.chapter}`] || 0)
+        : 0;
+
+      const actions = [];
+      if (calc.status === "not_started") {
+        const first = [...chapters].sort(
+          (a, b) =>
+            (parseChapterNumber(a.chapter) || 0) -
+            (parseChapterNumber(b.chapter) || 0),
+        )[0];
+        if (first) {
+          actions.push({
+            label: "Start",
+            variant: "primary",
+            onClick: () => openReaderAt(item, first),
+          });
+        }
+        if (calc.latest) {
+          actions.push({
+            label: "Latest",
+            onClick: () => openReaderAt(item, calc.latest),
+          });
+        }
+      } else {
+        if (calc.current) {
+          actions.push({
+            label: "Resume",
+            variant: "primary",
+            onClick: () => openReaderAt(item, calc.current),
+          });
+        }
+        if (calc.status === "new" && calc.latest) {
+          actions.push({
+            label: "Latest",
+            onClick: () => openReaderAt(item, calc.latest),
+          });
+        }
+      }
+
+      return {
+        ...base,
+        status: calc.status,
+        currentLabel,
+        latestLabel,
+        newCount: calc.newCount,
+        progressPct,
+        actions,
+      };
+    });
+  }, [mangaSaved, updatesState, mangaHistory, progress, openReaderAt]);
+
+  const sortedUpdateRows = useMemo(() => sortUpdates(updateRows), [updateRows]);
+  const updatesNewCount = useMemo(
+    () => countWithUpdates(updateRows),
+    [updateRows],
+  );
+  const updatesLoading = useMemo(
+    () =>
+      (mangaSaved || []).some(
+        (item) =>
+          !updatesState[`manga:${item.id}`] ||
+          updatesState[`manga:${item.id}`].status !== "ready",
+      ),
+    [mangaSaved, updatesState],
+  );
+
   const SUB_TABS = [
     { id: "spotlight", label: "Top 30" },
     { id: "in_progress", label: "In Progress" },
+    { id: "updates", label: "Updates" },
     { id: "bookmarks", label: "Bookmarks" },
     { id: "history", label: "History" },
   ];
@@ -256,6 +402,7 @@ export default function MangaPage({
             {SUB_TABS.map((tab) => {
               let count = null;
               if (tab.id === "in_progress") count = mangaInProgress.length;
+              if (tab.id === "updates") count = updatesLoading ? mangaSaved.length : updatesNewCount;
               if (tab.id === "bookmarks") count = mangaSaved.length;
               if (tab.id === "history") count = mangaHistory.length;
               if (tab.id === "spotlight") count = popular.length || 30;
@@ -377,7 +524,30 @@ export default function MangaPage({
               </div>
             )}
 
-            {/* 3. Bookmarks Tab */}
+            {/* 3. Updates Tab (bookmarked titles) */}
+            {activeTab === "updates" && (
+              <div className="hub-section">
+                <div className="hub-section-header">
+                  <span className="hub-section-title">Updates</span>
+                  <span className="hub-section-badge">
+                    {mangaSaved.length} Bookmarked
+                  </span>
+                </div>
+                <UpdatesFeed
+                  rows={sortedUpdateRows}
+                  total={mangaSaved.length}
+                  newCount={updatesNewCount}
+                  loading={updatesLoading}
+                  onRefresh={refreshUpdates}
+                  onOpen={handleSelectManga}
+                  emptyTitle="No bookmarked manga yet"
+                  emptyBody="Bookmark a manga and it will appear here with your current position and latest chapter."
+                  EmptyIcon={BookOpenIcon}
+                />
+              </div>
+            )}
+
+            {/* 4. Bookmarks Tab */}
             {activeTab === "bookmarks" && (
               <div className="hub-section">
                 <div className="hub-section-header">
@@ -411,7 +581,7 @@ export default function MangaPage({
               </div>
             )}
 
-            {/* 4. History Tab */}
+            {/* 5. History Tab */}
             {activeTab === "history" && (
               <div className="hub-section">
                 <div className="hub-section-header">
@@ -669,16 +839,14 @@ export default function MangaPage({
           initialPage={
             lastRead &&
             (String(lastRead.chapter) === String(readingChapter.chapter) ||
-              (lastRead.chapterId && lastRead.chapterId === readingChapter.id)) &&
-            !resumeInfo?.isNext
+              (lastRead.chapterId && lastRead.chapterId === readingChapter.id))
               ? Math.max(1, Number(lastRead.page) || 1)
               : 1
           }
           initialScrollRatio={
             lastRead &&
             (String(lastRead.chapter) === String(readingChapter.chapter) ||
-              (lastRead.chapterId && lastRead.chapterId === readingChapter.id)) &&
-            !resumeInfo?.isNext
+              (lastRead.chapterId && lastRead.chapterId === readingChapter.id))
               ? Number(lastRead.scrollRatio) || 0
               : 0
           }

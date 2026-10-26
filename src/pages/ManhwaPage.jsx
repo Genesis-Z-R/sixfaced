@@ -10,12 +10,21 @@ import {
 import {
   SearchIcon,
   CloseIcon,
+  BookOpenIcon,
   ManhwaScrollIcon,
   BookmarkIcon,
   BookmarkFillIcon,
   PlayIcon,
   BackIcon,
 } from "../components/Icons";
+import UpdatesFeed from "../components/UpdatesFeed";
+import { useUpdatesFeed } from "../utils/useUpdatesFeed";
+import {
+  computeMangaUpdate,
+  countWithUpdates,
+  parseChapterNumber,
+  sortUpdates,
+} from "../utils/updatesCalc";
 
 export default function ManhwaPage({
   onBookmark,
@@ -47,6 +56,7 @@ export default function ManhwaPage({
 
   // Reader state
   const [readingChapter, setReadingChapter] = useState(null);
+  const detailsRequestRef = useRef(0);
 
   // Resume progress tracking for selected title
   const lastRead = useMemo(() => {
@@ -160,6 +170,7 @@ export default function ManhwaPage({
   // ── Fetch Details & Chapters when a manhwa is selected ──────────────────────
   const handleSelectManhwa = useCallback(
     (manhwa) => {
+      const requestId = ++detailsRequestRef.current;
       setSelectedManhwa(manhwa);
       setDetails(null);
       setChapters([]);
@@ -169,6 +180,9 @@ export default function ManhwaPage({
         getManhwaDetails(manhwa.id, manhwa.title || manhwa.name).catch(() => manhwa),
         getManhwaChapters(manhwa.id, "asc", manhwa.title || manhwa.name).catch(() => []),
       ]).then(([det, chaps]) => {
+        // A slower response for a previously-selected title must not overwrite
+        // the title the user is actually looking at.
+        if (detailsRequestRef.current !== requestId) return;
         setDetails(det);
         setChapters(chaps);
         setLoadingDetails(false);
@@ -183,21 +197,36 @@ export default function ManhwaPage({
     }
   }, [initialManhwa, handleSelectManhwa]);
 
-  // Filter & sort chapters in details modal
-  const filteredChapters = chapters
-    .filter((c) => {
-      if (!chapterFilter.trim()) return true;
-      const q = chapterFilter.toLowerCase();
-      return (
-        String(c.chapter).toLowerCase().includes(q) ||
-        (c.title || "").toLowerCase().includes(q)
-      );
-    })
-    .sort((a, b) => {
-      const na = parseFloat(a.chapter) || 0;
-      const nb = parseFloat(b.chapter) || 0;
-      return chapterSort === "desc" ? nb - na : na - nb;
-    });
+  // Escape closes the details sheet when the reader is not covering it.
+  useEffect(() => {
+    if (!selectedManhwa || readingChapter) return undefined;
+    const onKey = (e) => {
+      if (e.key === "Escape") setSelectedManhwa(null);
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [selectedManhwa, readingChapter]);
+
+  // Filter & sort chapters in details modal (memoized: 1000+ rows otherwise
+  // re-sort on every progress update while the reader is open underneath).
+  const filteredChapters = useMemo(
+    () =>
+      chapters
+        .filter((c) => {
+          if (!chapterFilter.trim()) return true;
+          const q = chapterFilter.toLowerCase();
+          return (
+            String(c.chapter).toLowerCase().includes(q) ||
+            (c.title || "").toLowerCase().includes(q)
+          );
+        })
+        .sort((a, b) => {
+          const na = parseFloat(a.chapter) || 0;
+          const nb = parseFloat(b.chapter) || 0;
+          return chapterSort === "desc" ? nb - na : na - nb;
+        }),
+    [chapters, chapterFilter, chapterSort],
+  );
 
   // Filter collections
   const manhwaInProgress = inProgress.filter((i) => i && i.media_type === "manhwa");
@@ -206,9 +235,127 @@ export default function ManhwaPage({
   );
   const manhwaHistory = history.filter((i) => i && i.media_type === "manhwa");
 
+  // ── Updates tab (bookmarked titles) ────────────────────────────────────────
+  const updatesEnabled = manhwaSaved.length > 0;
+  const { state: updatesState, refresh: refreshUpdates } = useUpdatesFeed(
+    manhwaSaved,
+    (item) => getManhwaChapters(item.id, "desc", item.title || item.name),
+    updatesEnabled,
+  );
+
+  const openReaderAt = useCallback(
+    (item, chapter) => {
+      if (!item || !chapter) return;
+      if (!selectedManhwa || String(selectedManhwa.id) !== String(item.id)) {
+        handleSelectManhwa(item);
+      }
+      setReadingChapter(chapter);
+    },
+    [selectedManhwa, handleSelectManhwa],
+  );
+
+  const updateRows = useMemo(() => {
+    return (manhwaSaved || []).map((item) => {
+      const key = `manhwa:${item.id}`;
+      const entry = updatesState[key];
+      const base = {
+        key,
+        item,
+        title: item.title || item.name || "Untitled",
+        status: "loading",
+        currentLabel: null,
+        latestLabel: null,
+        newCount: null,
+        progressPct: 0,
+        actions: [],
+      };
+      if (!entry || entry.status === "queued" || entry.status === "loading") {
+        return base;
+      }
+      if (entry.status === "error") {
+        return { ...base, status: "error", error: entry.error };
+      }
+
+      const chapters = Array.isArray(entry.data) ? entry.data : [];
+      const lastRead = manhwaHistory.find(
+        (h) => String(h.id) === String(item.id),
+      );
+      const calc = computeMangaUpdate(chapters, lastRead);
+      const currentLabel = calc.current
+        ? `Ch. ${calc.current.chapter}`
+        : null;
+      const latestLabel = calc.latest ? `Latest Ch. ${calc.latest.chapter}` : "No chapters";
+      const progressPct = calc.current
+        ? Number(progress[`manhwa_${item.id}_c${calc.current.chapter}`] || 0)
+        : 0;
+
+      const actions = [];
+      if (calc.status === "not_started") {
+        const first = [...chapters].sort(
+          (a, b) =>
+            (parseChapterNumber(a.chapter) || 0) -
+            (parseChapterNumber(b.chapter) || 0),
+        )[0];
+        if (first) {
+          actions.push({
+            label: "Start",
+            variant: "primary",
+            onClick: () => openReaderAt(item, first),
+          });
+        }
+        if (calc.latest) {
+          actions.push({
+            label: "Latest",
+            onClick: () => openReaderAt(item, calc.latest),
+          });
+        }
+      } else {
+        if (calc.current) {
+          actions.push({
+            label: "Resume",
+            variant: "primary",
+            onClick: () => openReaderAt(item, calc.current),
+          });
+        }
+        if (calc.status === "new" && calc.latest) {
+          actions.push({
+            label: "Latest",
+            onClick: () => openReaderAt(item, calc.latest),
+          });
+        }
+      }
+
+      return {
+        ...base,
+        status: calc.status,
+        currentLabel,
+        latestLabel,
+        newCount: calc.newCount,
+        progressPct,
+        actions,
+      };
+    });
+  }, [manhwaSaved, updatesState, manhwaHistory, progress, openReaderAt]);
+
+  const sortedUpdateRows = useMemo(() => sortUpdates(updateRows), [updateRows]);
+  const updatesNewCount = useMemo(
+    () => countWithUpdates(updateRows),
+    [updateRows],
+  );
+  const updatesLoading = useMemo(
+    () =>
+      (manhwaSaved || []).some(
+        (item) =>
+          !updatesState[`manhwa:${item.id}`] ||
+          updatesState[`manhwa:${item.id}`].status !== "ready",
+      ),
+    [manhwaSaved, updatesState],
+  );
+
   const SUB_TABS = [
     { id: "spotlight", label: "Top Manhwa" },
     { id: "in_progress", label: "In Progress" },
+    { id: "updates", label: "Updates" },
     { id: "bookmarks", label: "Bookmarks" },
     { id: "history", label: "History" },
   ];
@@ -256,6 +403,7 @@ export default function ManhwaPage({
             {SUB_TABS.map((tab) => {
               let count = null;
               if (tab.id === "in_progress") count = manhwaInProgress.length;
+              if (tab.id === "updates") count = updatesLoading ? manhwaSaved.length : updatesNewCount;
               if (tab.id === "bookmarks") count = manhwaSaved.length;
               if (tab.id === "history") count = manhwaHistory.length;
               if (tab.id === "spotlight") count = popular.length || 20;
@@ -377,7 +525,30 @@ export default function ManhwaPage({
               </div>
             )}
 
-            {/* 3. Bookmarks Tab */}
+            {/* 3. Updates Tab (bookmarked titles) */}
+            {activeTab === "updates" && (
+              <div className="hub-section">
+                <div className="hub-section-header">
+                  <span className="hub-section-title">Updates</span>
+                  <span className="hub-section-badge">
+                    {manhwaSaved.length} Bookmarked
+                  </span>
+                </div>
+                <UpdatesFeed
+                  rows={sortedUpdateRows}
+                  total={manhwaSaved.length}
+                  newCount={updatesNewCount}
+                  loading={updatesLoading}
+                  onRefresh={refreshUpdates}
+                  onOpen={handleSelectManhwa}
+                  emptyTitle="No bookmarked manga yet"
+                  emptyBody="Bookmark a manga and it will appear here with your current position and latest chapter."
+                  EmptyIcon={BookOpenIcon}
+                />
+              </div>
+            )}
+
+            {/* 4. Bookmarks Tab */}
             {activeTab === "bookmarks" && (
               <div className="hub-section">
                 <div className="hub-section-header">
@@ -411,7 +582,7 @@ export default function ManhwaPage({
               </div>
             )}
 
-            {/* 4. History Tab */}
+            {/* 5. History Tab */}
             {activeTab === "history" && (
               <div className="hub-section">
                 <div className="hub-section-header">
@@ -677,16 +848,14 @@ export default function ManhwaPage({
           initialPage={
             lastRead &&
             (String(lastRead.chapter) === String(readingChapter.chapter) ||
-              (lastRead.chapterId && lastRead.chapterId === readingChapter.id)) &&
-            !resumeInfo?.isNext
+              (lastRead.chapterId && lastRead.chapterId === readingChapter.id))
               ? Math.max(1, Number(lastRead.page) || 1)
               : 1
           }
           initialScrollRatio={
             lastRead &&
             (String(lastRead.chapter) === String(readingChapter.chapter) ||
-              (lastRead.chapterId && lastRead.chapterId === readingChapter.id)) &&
-            !resumeInfo?.isNext
+              (lastRead.chapterId && lastRead.chapterId === readingChapter.id))
               ? Number(lastRead.scrollRatio) || 0
               : 0
           }

@@ -12,7 +12,7 @@ jobs:
       - name: Setup Node
         uses: actions/setup-node@v4
         with:
-          node-version: 20
+          node-version: 22
           cache: npm
 
       - name: Cache deps
@@ -26,6 +26,10 @@ jobs:
 
       - name: Install deps
         run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Run tests
+        run: npm test
       - name: Build macOS (universal)
         run: npm run dist:mac
 

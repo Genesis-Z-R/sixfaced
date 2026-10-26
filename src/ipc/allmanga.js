@@ -7,6 +7,13 @@ const { ipcMain } = require("electron");
 const https = require("https");
 const http = require("http");
 const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
+const { assertPublicHttpUrl } = require("./netGuard");
+const { execFile } = require("child_process");
+const { promisify } = require("util");
+
+const execFileAsync = promisify(execFile);
 
 // ── AllAnime hex cipher (from ani-cli) ────────────────────────────────────────
 
@@ -269,32 +276,33 @@ function followRedirects(urlStr, maxHops = 10) {
 
 // Resolves a YouTube URL to a direct stream using yt-dlp.
 // Returns the best mp4/webm URL, or null if yt-dlp is not available.
-function resolveWithYtdlp(youtubeUrl) {
-  return new Promise((resolve) => {
-    const { spawnSync } = require("child_process");
-    // Check if yt-dlp is available
-    const which = spawnSync(
-      process.platform === "win32" ? "where" : "which",
-      ["yt-dlp"],
-      { encoding: "utf8" },
-    );
-    if (which.status !== 0) return resolve(null);
+async function resolveWithYtdlp(youtubeUrl) {
+  try {
+    await execFileAsync(process.platform === "win32" ? "where" : "which", [
+      "yt-dlp",
+    ], { timeout: 5000, encoding: "utf8" });
+  } catch {
+    return null;
+  }
 
-    const result = spawnSync(
+  try {
+    // Async: a 30s blocking spawn used to freeze the entire app.
+    const { stdout } = await execFileAsync(
       "yt-dlp",
       [
         "--no-playlist",
         "-f",
         "bestvideo[ext=mp4]+bestaudio[ext=m4a]/best[ext=mp4]/best",
-        "-g", // print URL only
+        "-g",
         youtubeUrl,
       ],
-      { encoding: "utf8", timeout: 30000 },
+      { timeout: 30000, encoding: "utf8", maxBuffer: 1024 * 1024 },
     );
-    if (result.status !== 0 || !result.stdout?.trim()) return resolve(null);
-    // yt-dlp -g may return multiple lines (video+audio); take first
-    resolve(result.stdout.trim().split("\n")[0]);
-  });
+    const first = String(stdout || "").trim().split("\n")[0];
+    return first || null;
+  } catch {
+    return null;
+  }
 }
 
 function allanimeGQL(variables, query) {
@@ -644,26 +652,62 @@ async function trySourceUrls(sourceUrls) {
 // ── Local player server ───────────────────────────────────────────────────────
 
 let _playerServer = null;
-let _currentVideoUrl = null;
 let _currentVideoReferer = "https://allmanga.to";
-let _currentVideoStartTime = 0;
 
-function buildPlayerHtml(videoUrl, startTime) {
+// A token per player launch, so two windows (or a quick episode switch) can
+// never read each other's video URL. Bounded so the map cannot grow forever.
+const playerSessions = new Map();
+const PLAYER_SESSION_LIMIT = 24;
+
+let _hlsSource = null;
+function readHlsSource() {
+  if (_hlsSource !== null) return _hlsSource;
+  try {
+    _hlsSource = fs.readFileSync(path.join(__dirname, "vendor", "hls.min.js"));
+  } catch {
+    _hlsSource = false;
+  }
+  return _hlsSource;
+}
+
+function rememberPlayerSession({ url, referer, startTime }) {
+  const token = crypto.randomUUID();
+  playerSessions.set(token, {
+    url,
+    referer: referer || "https://allmanga.to",
+    startTime: startTime || 0,
+    ts: Date.now(),
+  });
+  if (playerSessions.size > PLAYER_SESSION_LIMIT) {
+    const oldest = [...playerSessions.entries()].sort(
+      (a, b) => a[1].ts - b[1].ts,
+    )[0];
+    if (oldest) playerSessions.delete(oldest[0]);
+  }
+  return token;
+}
+
+function buildPlayerHtml(videoUrl, startTime, referer) {
   const isM3u8 = videoUrl.includes(".m3u8");
+  const proxyUrl =
+    "/proxy?url=" +
+    encodeURIComponent(videoUrl) +
+    "&ref=" +
+    encodeURIComponent(referer || "");
   return `<!DOCTYPE html>
 <html><head><meta charset="utf-8">
 <style>*{margin:0;padding:0;box-sizing:border-box}html,body{width:100%;height:100%;background:#000;overflow:hidden}video{width:100%;height:100%;object-fit:contain;display:block}</style>
 </head><body>
-<video id="v" src="${isM3u8 ? "" : "/proxy?url=" + encodeURIComponent(videoUrl)}" autoplay controls playsinline crossorigin="anonymous"></video>
+<video id="v" src="${isM3u8 ? "" : proxyUrl}" autoplay controls playsinline crossorigin="anonymous"></video>
 ${
   isM3u8
     ? `
-<script src="https://cdn.jsdelivr.net/npm/hls.js@latest/dist/hls.min.js"></script>
+<script src="/hls.js"></script>
 <script>
   const video=document.getElementById('v');
   const src=decodeURIComponent("${encodeURIComponent(videoUrl)}");
-  const startTime=${startTime};
-  if(Hls.isSupported()){
+  const startTime=${Number(startTime) || 0};
+  if(window.Hls&&Hls.isSupported()){
     const hls=new Hls();
     hls.loadSource(src);hls.attachMedia(video);
     hls.on(Hls.Events.MANIFEST_PARSED,()=>{if(startTime>0)video.currentTime=startTime;video.play().catch(()=>{});});
@@ -675,11 +719,87 @@ ${
     : startTime > 0
       ? `<script>
   const v=document.getElementById('v');
-  v.addEventListener('loadedmetadata',()=>{v.currentTime=${startTime};},{once:true});
+  v.addEventListener('loadedmetadata',()=>{v.currentTime=${Number(startTime) || 0};},{once:true});
 </script>`
       : ""
 }
 </body></html>`;
+}
+
+async function handleProxy(req, res, url) {
+  if (req.method !== "GET" && req.method !== "HEAD") {
+    res.writeHead(405);
+    res.end();
+    return;
+  }
+  const target = url.searchParams.get("url");
+  if (!target) {
+    res.writeHead(400);
+    res.end();
+    return;
+  }
+
+  let targetUrl;
+  try {
+    targetUrl = await assertPublicHttpUrl(target);
+  } catch {
+    res.writeHead(403);
+    res.end("Blocked target");
+    return;
+  }
+
+  const referer = url.searchParams.get("ref") || _currentVideoReferer;
+  const lib = targetUrl.protocol === "https:" ? https : http;
+  let proxyReq;
+  try {
+    proxyReq = lib.request(
+      {
+        hostname: targetUrl.hostname,
+        port: targetUrl.port || undefined,
+        path: targetUrl.pathname + targetUrl.search,
+        method: req.method,
+        headers: {
+          "User-Agent":
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0",
+          Referer: referer,
+          Range: req.headers["range"] || "",
+          Accept: "*/*",
+        },
+      },
+      (proxyRes) => {
+        const passHeaders = {};
+        for (const header of [
+          "content-type",
+          "content-length",
+          "content-range",
+          "accept-ranges",
+          "last-modified",
+          "etag",
+        ]) {
+          if (proxyRes.headers[header]) passHeaders[header] = proxyRes.headers[header];
+        }
+        passHeaders["Cache-Control"] = "no-store";
+        res.writeHead(proxyRes.statusCode || 502, passHeaders);
+        proxyRes.pipe(res);
+      },
+    );
+  } catch {
+    res.writeHead(502);
+    res.end();
+    return;
+  }
+
+  proxyReq.on("error", () => {
+    if (!res.headersSent) res.writeHead(502);
+    res.end();
+  });
+  // Stop pulling the upstream stream when the player seeks/closes.
+  res.on("close", () => {
+    try {
+      proxyReq.destroy();
+    } catch {}
+  });
+  req.pipe(proxyReq);
 }
 
 function getPlayerServer() {
@@ -689,66 +809,39 @@ function getPlayerServer() {
       const url = new URL(req.url, "http://localhost");
 
       if (url.pathname === "/player" || url.pathname === "/") {
+        const token = url.searchParams.get("t");
+        const session = token ? playerSessions.get(token) : null;
         res.writeHead(200, {
           "Content-Type": "text/html",
           "Cache-Control": "no-store",
         });
         res.end(
-          buildPlayerHtml(_currentVideoUrl || "", _currentVideoStartTime || 0),
+          buildPlayerHtml(
+            session?.url || "",
+            session?.startTime || 0,
+            session?.referer || _currentVideoReferer,
+          ),
         );
         return;
       }
 
-      if (url.pathname === "/proxy") {
-        const target = url.searchParams.get("url");
-        if (!target) {
-          res.writeHead(400);
+      if (url.pathname === "/hls.js") {
+        const source = readHlsSource();
+        if (!source) {
+          res.writeHead(404);
           res.end();
           return;
         }
-        try {
-          const targetUrl = new URL(target);
-          const lib = targetUrl.protocol === "https:" ? https : http;
-          const proxyReq = lib.request(
-            {
-              hostname: targetUrl.hostname,
-              path: targetUrl.pathname + targetUrl.search,
-              method: req.method || "GET",
-              headers: {
-                "User-Agent":
-                  "Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:109.0) Gecko/20100101 Firefox/121.0",
-                Referer: _currentVideoReferer,
-                Range: req.headers["range"] || "",
-                Accept: "*/*",
-              },
-            },
-            (proxyRes) => {
-              const passHeaders = {};
-              for (const h of [
-                "content-type",
-                "content-length",
-                "content-range",
-                "accept-ranges",
-                "last-modified",
-                "etag",
-              ]) {
-                if (proxyRes.headers[h]) passHeaders[h] = proxyRes.headers[h];
-              }
-              passHeaders["Access-Control-Allow-Origin"] = "*";
-              passHeaders["Cache-Control"] = "no-store";
-              res.writeHead(proxyRes.statusCode, passHeaders);
-              proxyRes.pipe(res);
-            },
-          );
-          proxyReq.on("error", () => {
-            res.writeHead(502);
-            res.end();
-          });
-          req.pipe(proxyReq);
-        } catch {
-          res.writeHead(500);
-          res.end();
-        }
+        res.writeHead(200, {
+          "Content-Type": "application/javascript",
+          "Cache-Control": "public, max-age=86400",
+        });
+        res.end(source);
+        return;
+      }
+
+      if (url.pathname === "/proxy") {
+        handleProxy(req, res, url);
         return;
       }
 
@@ -768,11 +861,15 @@ function getPlayerServer() {
 
 function register() {
   ipcMain.handle("set-player-video", async (_, { url, referer, startTime }) => {
-    _currentVideoUrl = url;
-    _currentVideoReferer = referer || "https://allmanga.to";
-    _currentVideoStartTime = startTime || 0;
+    if (!url || typeof url !== "string") {
+      return { ok: false, error: "Missing video url" };
+    }
+    if (referer) _currentVideoReferer = referer;
+    const token = rememberPlayerSession({ url, referer, startTime });
     const server = await getPlayerServer();
-    return { playerUrl: `http://127.0.0.1:${server.address().port}/player` };
+    return {
+      playerUrl: `http://127.0.0.1:${server.address().port}/player?t=${token}`,
+    };
   });
 
   ipcMain.handle(

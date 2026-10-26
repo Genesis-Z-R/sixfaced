@@ -1,14 +1,19 @@
 // ── IPC: Player launch, window controls, auto-updater ─────────────────────────
 
 const { ipcMain, shell, app } = require("electron");
-const { spawn, spawnSync } = require("child_process");
+const { spawn, spawnSync, execFile } = require("child_process");
+const { promisify } = require("util");
+
+const execFileAsync = promisify(execFile);
 const path = require("path");
 const fs = require("fs");
 const https = require("https");
 const http = require("http");
 const os = require("os");
+const crypto = require("crypto");
 
 let _updateAbortController = null;
+let _updateInFlight = false;
 
 // ── Trusted release sources for the auto-updater ──────────────────────────────
 // Same validation logic applies to every entry below, adding a new source
@@ -241,9 +246,11 @@ function register(getMainWindow, { writeSecretMigration }) {
           ? ["/opt/homebrew/bin/ffprobe", "/usr/local/bin/ffprobe", "ffprobe"]
           : ["/usr/bin/ffprobe", "/usr/local/bin/ffprobe", "ffprobe"];
 
+    // Async probes: these used to be spawnSync, which froze every IPC channel
+    // (and the whole UI) for up to ~24s on an unreadable file.
     for (const probe of probePaths) {
       try {
-        const result = spawnSync(
+        const { stdout } = await execFileAsync(
           probe,
           [
             "-v",
@@ -254,16 +261,14 @@ function register(getMainWindow, { writeSecretMigration }) {
             "default=noprint_wrappers=1:nokey=1",
             filePath,
           ],
-          { encoding: "utf8", timeout: 8000 },
+          { timeout: 8000, maxBuffer: 1024 * 1024, encoding: "utf8" },
         );
-        if (result.status === 0) {
-          const secs = parseFloat(result.stdout.trim());
-          if (!isNaN(secs) && secs > 0) return { ok: true, duration: secs };
-        }
+        const secs = parseFloat(String(stdout).trim());
+        if (!Number.isNaN(secs) && secs > 0) return { ok: true, duration: secs };
       } catch {}
     }
 
-    // Fallback: try ffmpeg -i and parse Duration line
+    // Fallback: ffmpeg -i prints the Duration line to stderr and exits non-zero.
     const ffmpegPaths =
       platform === "win32"
         ? ["ffmpeg", "C:\\ffmpeg\\bin\\ffmpeg.exe"]
@@ -272,19 +277,25 @@ function register(getMainWindow, { writeSecretMigration }) {
           : ["/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg", "ffmpeg"];
 
     for (const ff of ffmpegPaths) {
+      let combined = "";
       try {
-        const r = spawnSync(ff, ["-i", filePath], {
-          encoding: "utf8",
+        const r = await execFileAsync(ff, ["-i", filePath], {
           timeout: 8000,
+          maxBuffer: 1024 * 1024,
+          encoding: "utf8",
         });
-        const combined = (r.stdout || "") + (r.stderr || "");
-        const m = combined.match(/Duration:\s*(\d+):(\d+):([\d.]+)/);
-        if (m) {
-          const secs =
-            parseInt(m[1]) * 3600 + parseInt(m[2]) * 60 + parseFloat(m[3]);
-          if (secs > 0) return { ok: true, duration: secs };
-        }
-      } catch {}
+        combined = String(r.stdout || "") + String(r.stderr || "");
+      } catch (err) {
+        combined = String(err?.stdout || "") + String(err?.stderr || "");
+      }
+      const m = combined.match(/Duration:\s*(\d+):(\d+):([\d.]+)/);
+      if (m) {
+        const secs =
+          parseInt(m[1], 10) * 3600 +
+          parseInt(m[2], 10) * 60 +
+          parseFloat(m[3]);
+        if (secs > 0) return { ok: true, duration: secs };
+      }
     }
 
     return { ok: false };
@@ -303,7 +314,34 @@ function register(getMainWindow, { writeSecretMigration }) {
     return null;
   });
 
+  /**
+   * Fetches `<url>.sha256` and compares it with the downloaded file.
+   * Returns "ok" | "mismatch" | "unavailable" (no manifest published).
+   */
+  async function verifyUpdateHash(filePath, url) {
+    try {
+      const res = await fetch(`${url}.sha256`, {
+        signal: AbortSignal.timeout(8000),
+        headers: { "User-Agent": "Streambert-AutoUpdater" },
+      });
+      if (!res.ok) return "unavailable";
+      const expected = (await res.text()).trim().split(/\s+/)[0].toLowerCase();
+      if (!/^[a-f0-9]{64}$/.test(expected)) return "unavailable";
+      const actual = crypto
+        .createHash("sha256")
+        .update(fs.readFileSync(filePath))
+        .digest("hex");
+      return actual === expected ? "ok" : "mismatch";
+    } catch {
+      return "unavailable";
+    }
+  }
+
   ipcMain.handle("download-and-install-update", async (_, { url, format }) => {
+    if (_updateInFlight) {
+      return { ok: false, error: "An update is already downloading" };
+    }
+    _updateInFlight = true;
     try {
       const ALLOWED_FORMATS = [
         "exe",
@@ -345,7 +383,12 @@ function register(getMainWindow, { writeSecretMigration }) {
               : format === "dmg"
                 ? ".dmg"
                 : ".AppImage";
-      const destPath = path.join(os.tmpdir(), `streambert-update${ext}`);
+      // Unique per run: a fixed name lets concurrent runs corrupt each other
+      // and makes the temp path predictable for other local processes.
+      const destPath = path.join(
+        os.tmpdir(),
+        `streambert-update-${crypto.randomUUID()}${ext}`,
+      );
 
       await new Promise((resolve, reject) => {
         if (signal.aborted) return reject(new Error("Cancelled"));
@@ -436,6 +479,17 @@ function register(getMainWindow, { writeSecretMigration }) {
       });
 
       if (signal.aborted) return { ok: false, error: "Cancelled" };
+
+      // Optional integrity check: releases may publish `<asset>.sha256`. When
+      // present a mismatch is fatal; when absent we keep the URL allowlist as
+      // the only guarantee (documented in the updater notes).
+      const hashState = await verifyUpdateHash(destPath, url);
+      if (hashState === "mismatch") {
+        try {
+          fs.unlinkSync(destPath);
+        } catch {}
+        return { ok: false, error: "Update checksum mismatch — download discarded" };
+      }
 
       // ── Helper: send "Installing…" to renderer ──────────────────────────────
       const sendInstalling = () => {
@@ -558,6 +612,7 @@ function register(getMainWindow, { writeSecretMigration }) {
     } catch (e) {
       return { ok: false, error: e.message };
     } finally {
+      _updateInFlight = false;
       _updateAbortController = null;
     }
   });
@@ -763,8 +818,18 @@ function register(getMainWindow, { writeSecretMigration }) {
 }
 
 // ── Video control helper across all frames in a webContents ─────────────────
+const ALLOWED_PLAYER_ACTIONS = new Set([
+  "toggle-play",
+  "seek",
+  "volume",
+  "toggle-mute",
+  "fullscreen",
+  "seek-percent",
+]);
+
 async function executeVideoControl(wc, action, value) {
   if (!wc || wc.isDestroyed()) return null;
+  if (!ALLOWED_PLAYER_ACTIONS.has(action)) return null;
 
   const allFrames = [];
   const collect = (frame) => {

@@ -1,7 +1,9 @@
 import { useState } from "react";
 import { secureStorage, STORAGE_KEYS } from "../utils/storage";
+import { useModalKeys } from "../utils/useModalKeys";
 
 export default function WyzieKeyModal({ onDone, onSkip }) {
+  const modalRef = useModalKeys(onSkip);
   const [manualKey, setManualKey] = useState("");
   const [phase, setPhase] = useState("prompt");
   const [errorMsg, setErrorMsg] = useState("");
@@ -73,6 +75,7 @@ export default function WyzieKeyModal({ onDone, onSkip }) {
 
   return (
     <div
+      ref={modalRef}
       style={{
         position: "fixed",
         inset: 0,

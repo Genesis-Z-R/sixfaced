@@ -226,11 +226,14 @@ export default function MoviePage({
   const autoMarkedRef = useRef(false);
   // Tracks last known playback position, used to detect resolution-change resets
   const lastKnownTimeRef = useRef(0);
+  const failoverToastTimerRef = useRef(null);
   // Timestamp until which we ignore reset detection (post-seekback cooldown)
   const seekBackCooldownRef = useRef(0);
 
   useEffect(() => {
     let mounted = true;
+    // Never show the previous film's metadata while the new one loads.
+    setDetails(null);
     tmdbFetch(`/movie/${item.id}`, apiKey)
       .then((d) => {
         if (mounted) setDetails(d);
@@ -292,6 +295,17 @@ export default function MoviePage({
       mounted = false;
     };
   }, [details?.belongs_to_collection?.id, apiKey]);
+
+  // Leaving `playing` true across a title switch strands async sources on
+  // about:blank, because the resolve effect is keyed on `playing`. Only reset
+  // on a *title* change; switching source keeps the player open.
+  const previousItemIdRef = useRef(item.id);
+  useEffect(() => {
+    if (previousItemIdRef.current !== item.id) {
+      previousItemIdRef.current = item.id;
+      setPlaying(false);
+    }
+  }, [item.id]);
 
   // Reset m3u8 URL, subtitle URL and source menu whenever the movie or source changes
   useEffect(() => {
@@ -420,7 +434,13 @@ export default function MoviePage({
             setFailoverToast(
               `AllManga stream unavailable — switched to ${nextSrcObj?.label || "VidSrc"}`,
             );
-            setTimeout(() => setFailoverToast(null), 4500);
+            if (failoverToastTimerRef.current) {
+              clearTimeout(failoverToastTimerRef.current);
+            }
+            failoverToastTimerRef.current = setTimeout(() => {
+              failoverToastTimerRef.current = null;
+              setFailoverToast(null);
+            }, 4500);
             setPlayerSource(next);
           } else {
             setResolveError(res?.error || "Movie not found on AllManga");
@@ -439,7 +459,7 @@ export default function MoviePage({
     return () => {
       mounted = false;
     };
-  }, [playing, playerSource, dubMode]);
+  }, [playing, playerSource, dubMode, item.id]);
 
   useEffect(() => {
     if (!window.electron) return;

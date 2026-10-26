@@ -1,11 +1,11 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { storage, STORAGE_KEYS } from "./storage";
 
-const _todayForEpisodes = (() => {
+function todayForEpisodes() {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
   return d;
-})();
+}
 
 export function useAutoplay({ nextEp, playEpisode, restricted }) {
   const [autoplayCountdown, setAutoplayCountdown] = useState(null);
@@ -40,7 +40,7 @@ export function useAutoplay({ nextEp, playEpisode, restricted }) {
     if (!currentNextEp) return;
 
     const epUnreleased = currentNextEp.air_date
-      ? new Date(currentNextEp.air_date) > _todayForEpisodes
+      ? new Date(currentNextEp.air_date) > todayForEpisodes()
       : false;
     if (restricted || epUnreleased) return;
 

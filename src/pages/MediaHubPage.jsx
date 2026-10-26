@@ -6,7 +6,16 @@ import {
   fetchTop30Anime,
   searchHubMedia,
   isAnimeContent,
+  tmdbFetch,
 } from "../utils/api";
+import UpdatesFeed from "../components/UpdatesFeed";
+import { useUpdatesFeed } from "../utils/useUpdatesFeed";
+import {
+  computeSeriesUpdate,
+  countWithUpdates,
+  formatEpisode,
+  sortUpdates,
+} from "../utils/updatesCalc";
 import {
   SearchIcon,
   CloseIcon,
@@ -69,6 +78,7 @@ const HUB_CONFIG = {
 const SUB_TABS = [
   { id: "spotlight", label: "Top 30" },
   { id: "in_progress", label: "In Progress" },
+  { id: "updates", label: "Updates" },
   { id: "bookmarks", label: "Bookmarks" },
   { id: "history", label: "History" },
 ];
@@ -118,6 +128,95 @@ export default function MediaHubPage({
     () => history.filter(config.matcher),
     [history, config],
   );
+
+  // ── Updates tab (bookmarked shows) ────────────────────────────────────────
+  const supportsUpdates = medium !== "movies";
+  const updatesEnabled = supportsUpdates && mediumSaved.length > 0;
+  const { state: updatesState, refresh: refreshUpdates } = useUpdatesFeed(
+    mediumSaved,
+    (item) => tmdbFetch(`/tv/${item.id}`, apiKey),
+    updatesEnabled,
+  );
+
+  const updateRows = useMemo(() => {
+    return (mediumSaved || []).map((item) => {
+      const key = `${item.media_type || "media"}:${item.id}`;
+      const entry = updatesState[key];
+      const base = {
+        key,
+        item,
+        title: item.title || item.name || "Untitled",
+        status: "loading",
+        currentLabel: null,
+        latestLabel: null,
+        newCount: null,
+        progressPct: 0,
+        actions: [],
+      };
+      if (!entry || entry.status === "queued" || entry.status === "loading") {
+        return base;
+      }
+      if (entry.status === "error") {
+        return { ...base, status: "error", error: entry.error };
+      }
+
+      const lastWatch = history.find(
+        (h) => String(h.id) === String(item.id),
+      );
+      const calc = computeSeriesUpdate(entry.data, lastWatch);
+      const currentLabel = calc.current
+        ? formatEpisode(calc.current.season, calc.current.episode)
+        : null;
+      const latestLabel = calc.latest
+        ? `Latest ${formatEpisode(
+            calc.latest.season_number,
+            calc.latest.episode_number,
+          )}`
+        : null;
+
+      return {
+        ...base,
+        status: calc.status,
+        currentLabel,
+        latestLabel,
+        newCount: calc.newCount,
+        newSeason: calc.newSeason,
+        actions: [
+          {
+            label: calc.status === "not_started" ? "Start" : "Open",
+            variant: "primary",
+            onClick: () => onSelect(item),
+          },
+          ...(calc.latest
+            ? [
+                {
+                  label: "Latest",
+                  onClick: () =>
+                    onSelect(item, {
+                      season: calc.latest.season_number,
+                      episode: calc.latest.episode_number,
+                    }),
+                },
+              ]
+            : []),
+        ],
+      };
+    });
+  }, [mediumSaved, updatesState, history, onSelect]);
+
+  const sortedUpdateRows = useMemo(() => sortUpdates(updateRows), [updateRows]);
+  const updatesNewCount = useMemo(
+    () => countWithUpdates(updateRows),
+    [updateRows],
+  );
+  const updatesLoading = useMemo(
+    () =>
+      (mediumSaved || []).some(
+        (item) => updatesState[`${item.media_type || "media"}:${item.id}`]?.status !== "ready",
+      ),
+    [mediumSaved, updatesState],
+  );
+
 
   // Ratings for age filtering / indicators
   const allCards = useMemo(
@@ -238,9 +337,13 @@ export default function MediaHubPage({
       {!searchQuery.trim() && (
         <div className="hub-tabs-bar">
           <div className="hub-tabs-list">
-            {SUB_TABS.map((tab) => {
+            {(medium === "movies"
+              ? SUB_TABS.filter((t) => t.id !== "updates")
+              : SUB_TABS
+            ).map((tab) => {
               let count = null;
               if (tab.id === "in_progress") count = mediumInProgress.length;
+              if (tab.id === "updates") count = updatesLoading ? mediumSaved.length : updatesNewCount;
               if (tab.id === "bookmarks") count = mediumSaved.length;
               if (tab.id === "history") count = mediumHistory.length;
               if (tab.id === "spotlight") count = top30.length || 30;
@@ -391,7 +494,30 @@ export default function MediaHubPage({
               </div>
             )}
 
-            {/* 3. Bookmarks Tab */}
+            {/* 3. Updates Tab (bookmarked shows) */}
+            {activeTab === "updates" && (
+              <div className="hub-section">
+                <div className="hub-section-header">
+                  <span className="hub-section-title">Updates</span>
+                  <span className="hub-section-badge">
+                    {mediumSaved.length} Bookmarked
+                  </span>
+                </div>
+                <UpdatesFeed
+                  rows={sortedUpdateRows}
+                  total={mediumSaved.length}
+                  newCount={updatesNewCount}
+                  loading={updatesLoading}
+                  onRefresh={refreshUpdates}
+                  onOpen={onSelect}
+                  emptyTitle={`No bookmarked ${config.title.toLowerCase()} yet`}
+                  emptyBody="Bookmark a show and it will appear here with the episode you are on and the latest one aired."
+                  EmptyIcon={config.icon}
+                />
+              </div>
+            )}
+
+            {/* 4. Bookmarks Tab */}
             {activeTab === "bookmarks" && (
               <div className="hub-section">
                 <div className="hub-section-header">
@@ -427,7 +553,7 @@ export default function MediaHubPage({
               </div>
             )}
 
-            {/* 4. History Tab */}
+            {/* 5. History Tab */}
             {activeTab === "history" && (
               <div className="hub-section">
                 <div className="hub-section-header">

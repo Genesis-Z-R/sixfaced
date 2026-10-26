@@ -6,6 +6,8 @@ const { ipcMain } = require("electron");
 const axios = require("axios");
 const cheerio = require("cheerio");
 const { MANGA } = require("@consumet/extensions");
+const { LruCache } = require("./lruCache");
+const { assertPublicHttpUrl } = require("./netGuard");
 
 const ASURA_BASE = "https://asurascans.com";
 const ASURA_CDN = "https://cdn.asurascans.com";
@@ -390,15 +392,8 @@ function register() {
       return { ok: true, details };
     } catch (err) {
       return {
-        ok: true,
-        details: {
-          id: targetId,
-          title: title || "Manhwa Details",
-          name: title || "Manhwa Details",
-          media_type: "manhwa",
-          overview: "Read Korean manhwa chapters with continuous vertical scroll.",
-          provider: "asura",
-        },
+        ok: false,
+        error: err?.message || "Failed to load manhwa details",
       };
     }
   });
@@ -611,6 +606,7 @@ function register() {
     const tryFetch = async (targetUrl) => {
       if (!targetUrl || typeof targetUrl !== "string") return null;
       if (targetUrl.startsWith("data:")) return targetUrl;
+      await assertPublicHttpUrl(targetUrl);
       const isComick = targetUrl.includes("comick");
       const res = await axios.get(targetUrl, {
         headers: {

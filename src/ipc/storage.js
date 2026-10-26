@@ -6,6 +6,12 @@
 const { app, ipcMain, safeStorage } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const {
+  writeFileAtomic,
+  writeJsonAtomic,
+  readJsonWithBackup,
+  keepBackup,
+} = require("./fsSafe");
 
 // ── Secure key/value store ────────────────────────────────────────────────────
 // Falls back to plain base64 when OS encryption is unavailable (rare Linux).
@@ -19,17 +25,17 @@ let _secureStoreCache = null;
 
 function readSecureStore() {
   if (_secureStoreCache) return _secureStoreCache;
-  try {
-    _secureStoreCache = JSON.parse(fs.readFileSync(secureStoreFile(), "utf8"));
-  } catch {
-    _secureStoreCache = {};
-  }
+  const file = secureStoreFile();
+  _secureStoreCache = readJsonWithBackup(file, {}, "secure-store");
   return _secureStoreCache;
 }
 
 function writeSecureStore(data) {
   _secureStoreCache = data;
-  fs.writeFileSync(secureStoreFile(), JSON.stringify(data));
+  const file = secureStoreFile();
+  // Keep the last readable store around in case the next write is interrupted.
+  keepBackup(file);
+  writeJsonAtomic(file, data, { mode: 0o600 });
 }
 
 function secureStoreGet(key) {
@@ -68,6 +74,10 @@ function secureStoreSet(key, value) {
 const migrationFile = () =>
   path.join(app.getPath("userData"), ".secret-migration.json");
 
+// Plaintext secrets must never linger if the app crashes before the next boot.
+const MIGRATION_TTL_MS = 10 * 60 * 1000;
+let _migrationTimer = null;
+
 function writeSecretMigration() {
   try {
     const store = readSecureStore();
@@ -85,7 +95,14 @@ function writeSecretMigration() {
       }
     }
     if (Object.keys(plain).length > 0) {
-      fs.writeFileSync(migrationFile(), JSON.stringify(plain), { mode: 0o600 });
+      writeFileAtomic(migrationFile(), JSON.stringify(plain), { mode: 0o600 });
+      if (_migrationTimer) clearTimeout(_migrationTimer);
+      _migrationTimer = setTimeout(() => {
+        try {
+          fs.unlinkSync(migrationFile());
+        } catch {}
+      }, MIGRATION_TTL_MS);
+      if (typeof _migrationTimer.unref === "function") _migrationTimer.unref();
     }
   } catch {
     /* best-effort */
@@ -103,7 +120,7 @@ function applySecretMigrationIfNeeded() {
       fs.unlinkSync(mf);
     } catch {
       try {
-        fs.writeFileSync(mf, "{}", { mode: 0o600 });
+        writeFileAtomic(mf, "{}", { mode: 0o600 });
       } catch {}
     }
     plain = JSON.parse(raw);
@@ -131,26 +148,20 @@ const scheduledBackupSettingsFile = () =>
   path.join(app.getPath("userData"), "scheduled-backup-settings.json");
 
 function loadScheduledBackupSettings() {
-  try {
-    const raw = fs.readFileSync(scheduledBackupSettingsFile(), "utf8");
-    return JSON.parse(raw);
-  } catch {
-    return {
-      enabled: false,
-      path: "",
-      keepCount: 5,
-      frequency: "startup",
-      lastRun: null,
-    };
-  }
+  const fallback = {
+    enabled: false,
+    path: "",
+    keepCount: 5,
+    frequency: "startup",
+    lastRun: null,
+  };
+  return { ...fallback, ...readJsonWithBackup(scheduledBackupSettingsFile(), fallback, "backup-settings") };
 }
 
 function saveScheduledBackupSettings(settings) {
-  fs.writeFileSync(
-    scheduledBackupSettingsFile(),
-    JSON.stringify(settings, null, 2),
-    "utf8",
-  );
+  const file = scheduledBackupSettingsFile();
+  keepBackup(file);
+  writeJsonAtomic(file, settings);
 }
 
 function shouldRunScheduledBackup(settings) {
@@ -214,31 +225,30 @@ function register() {
         .slice(0, 19);
       const filename = `streambert-backup-${timestamp}.json`;
       const fullPath = path.join(resolvedDir, filename);
-      fs.writeFileSync(
-        fullPath,
-        JSON.stringify(
-          {
-            version: 1,
-            exportedAt: new Date().toISOString(),
-            scheduledBackup: true,
-            data,
-          },
-          null,
-          2,
-        ),
-        "utf8",
-      );
+      writeJsonAtomic(fullPath, {
+        version: 1,
+        exportedAt: new Date().toISOString(),
+        scheduledBackup: true,
+        data,
+      });
 
-      // Prune old backups
+      // Record the run before pruning: a failed prune must not make the
+      // scheduled backup fire again on every launch.
+      saveScheduledBackupSettings({
+        ...settings,
+        lastRun: new Date().toISOString(),
+      });
+
+      // Prune old backups (a file vanishing mid-scan is not fatal)
       const keepCount = Math.max(1, Number(settings.keepCount) || 5);
-      fs.readdirSync(resolvedDir)
-        .filter(
-          (f) => f.startsWith("streambert-backup-") && f.endsWith(".json"),
-        )
-        .map((f) => ({
-          name: f,
-          mtime: fs.statSync(path.join(resolvedDir, f)).mtimeMs,
-        }))
+      const entries = [];
+      for (const f of fs.readdirSync(resolvedDir)) {
+        if (!f.startsWith("streambert-backup-") || !f.endsWith(".json")) continue;
+        try {
+          entries.push({ name: f, mtime: fs.statSync(path.join(resolvedDir, f)).mtimeMs });
+        } catch {}
+      }
+      entries
         .sort((a, b) => b.mtime - a.mtime)
         .slice(keepCount)
         .forEach(({ name }) => {
@@ -247,10 +257,6 @@ function register() {
           } catch {}
         });
 
-      saveScheduledBackupSettings({
-        ...settings,
-        lastRun: new Date().toISOString(),
-      });
       return { ok: true, path: fullPath };
     } catch (e) {
       return { ok: false, error: e.message };
@@ -281,11 +287,7 @@ function register() {
         }
         const targetDir = path.join(docsDir, "Streambert");
         fs.mkdirSync(targetDir, { recursive: true });
-        fs.writeFileSync(
-          path.join(targetDir, "streambert_backup.json"),
-          payload,
-          "utf8",
-        );
+        writeFileAtomic(path.join(targetDir, "streambert_backup.json"), payload);
       } catch (e) {
         console.warn("[AutoBackup] Documents write failed:", e.message);
       }
@@ -294,11 +296,7 @@ function register() {
       try {
         const userDir = app.getPath("userData");
         fs.mkdirSync(userDir, { recursive: true });
-        fs.writeFileSync(
-          path.join(userDir, "streambert_backup.json"),
-          payload,
-          "utf8",
-        );
+        writeFileAtomic(path.join(userDir, "streambert_backup.json"), payload);
       } catch (e) {
         console.warn("[AutoBackup] UserData write failed:", e.message);
       }

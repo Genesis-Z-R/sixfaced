@@ -357,6 +357,31 @@ const ANILIST_CACHE_TTL = 1000 * 60 * 60 * 24 * 7; // 7 days
 // loaded once on first use, flushed to localStorage on write.
 let _anilistCache = null;
 
+const ANILIST_CACHE_MAX_ENTRIES = 300;
+
+/** Drops expired entries and caps the cache so localStorage cannot grow forever. */
+function pruneAnilistCache(cache) {
+  const now = Date.now();
+  for (const key of Object.keys(cache)) {
+    const entry = cache[key];
+    if (
+      !entry ||
+      typeof entry !== "object" ||
+      typeof entry.ts !== "number" ||
+      now - entry.ts > ANILIST_CACHE_TTL
+    ) {
+      delete cache[key];
+    }
+  }
+  const keys = Object.keys(cache);
+  if (keys.length > ANILIST_CACHE_MAX_ENTRIES) {
+    keys
+      .sort((a, b) => (cache[a]?.ts || 0) - (cache[b]?.ts || 0))
+      .slice(0, keys.length - ANILIST_CACHE_MAX_ENTRIES)
+      .forEach((key) => delete cache[key]);
+  }
+}
+
 function getAnilistCache() {
   if (_anilistCache) return _anilistCache;
   try {
@@ -365,13 +390,8 @@ function getAnilistCache() {
   } catch {
     _anilistCache = {};
   }
-  // Evict stale entries once on load
-  const now = Date.now();
-  for (const key of Object.keys(_anilistCache)) {
-    if (now - _anilistCache[key].ts > ANILIST_CACHE_TTL) {
-      delete _anilistCache[key];
-    }
-  }
+  if (!_anilistCache || typeof _anilistCache !== "object") _anilistCache = {};
+  pruneAnilistCache(_anilistCache);
   return _anilistCache;
 }
 
@@ -427,6 +447,7 @@ export const fetchAnilistData = async (
         "Content-Type": "application/json",
         Accept: "application/json",
       },
+      signal: AbortSignal.timeout(8000),
       body: JSON.stringify({
         query: ANILIST_QUERY,
         variables: { search: title, type },
@@ -436,6 +457,7 @@ export const fetchAnilistData = async (
     const data = json?.data?.Media || null;
 
     cache[cacheKey] = { data, ts: Date.now() };
+    pruneAnilistCache(cache);
     flushAnilistCache();
 
     return data;

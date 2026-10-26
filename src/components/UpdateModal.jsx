@@ -1,3 +1,4 @@
+import { useModalKeys } from "../utils/useModalKeys";
 import { useState, useEffect, useRef } from "react";
 
 // ── Image component that proxies through Electron main process ────────────────
@@ -515,9 +516,11 @@ export default function UpdateModal({
     }[format] || "installer";
 
   const busy = phase === "downloading" || phase === "installing";
+  const modalRef = useModalKeys(handleCancel, !busy);
 
   return (
     <div
+      ref={modalRef}
       onClick={busy ? undefined : handleCancel}
       style={{
         position: "fixed",

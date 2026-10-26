@@ -1,5 +1,8 @@
 // Keyboard Shortcuts reference modal
+import { useModalKeys } from "../utils/useModalKeys";
+
 export default function KeyboardShortcutsModal({ onClose }) {
+  const modalRef = useModalKeys(onClose);
   const shortcuts = [
     { keys: ["Ctrl", "F"], desc: "Open search" },
     { keys: ["Ctrl", "K"], desc: "Search on a page" },
@@ -30,6 +33,7 @@ export default function KeyboardShortcutsModal({ onClose }) {
 
   return (
     <div
+      ref={modalRef}
       onClick={onClose}
       style={{
         position: "fixed",

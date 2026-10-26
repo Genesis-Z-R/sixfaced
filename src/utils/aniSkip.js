@@ -6,9 +6,29 @@ const ANISKIP_API = "https://api.aniskip.com/v2";
 const CACHE_KEY = "streambert_aniskipCache";
 const CACHE_TTL = 1000 * 60 * 60 * 24 * 7; // 7 days
 
+const MAX_CACHE_ENTRIES = 500;
+
 function getCache() {
   try {
-    return JSON.parse(localStorage.getItem(CACHE_KEY) || "{}");
+    const parsed = JSON.parse(localStorage.getItem(CACHE_KEY) || "{}");
+    if (!parsed || typeof parsed !== "object") return {};
+    // Enforce the TTL and cap on read: entries are otherwise only overwritten.
+    const now = Date.now();
+    const keys = Object.keys(parsed);
+    for (const key of keys) {
+      const entry = parsed[key];
+      if (!entry || typeof entry !== "object" || now >= entry.expiresAt) {
+        delete parsed[key];
+      }
+    }
+    const remaining = Object.keys(parsed);
+    if (remaining.length > MAX_CACHE_ENTRIES) {
+      remaining
+        .sort((a, b) => (parsed[a]?.expiresAt || 0) - (parsed[b]?.expiresAt || 0))
+        .slice(0, remaining.length - MAX_CACHE_ENTRIES)
+        .forEach((key) => delete parsed[key]);
+    }
+    return parsed;
   } catch {
     return {};
   }
@@ -44,6 +64,7 @@ export async function fetchAniSkipTimings(malId, episodeNumber) {
     const res = await fetch(
       `${ANISKIP_API}/skip-times/${malId}/${episodeNumber}` +
         `?types[]=op&types[]=ed&types[]=mixed-op&types[]=mixed-ed&episodeLength=0`,
+      { signal: AbortSignal.timeout(8000) },
     );
 
     // 404 = no data for this episode, cache as null

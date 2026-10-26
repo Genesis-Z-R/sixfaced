@@ -46,7 +46,6 @@ const allmangaIpc = require("./src/ipc/allmanga");
 const mangaIpc = require("./src/ipc/manga");
 const manhwaIpc = require("./src/ipc/manhwa");
 const playerIpc = require("./src/ipc/player");
-const discordRpc = require("./src/ipc/discordRpc");
 
 // -- Ad/tracker block list -----------------------------------------------------
 const BLOCKED_HOSTS = [
@@ -116,6 +115,7 @@ function isHostBlocked(url) {
 
 // -- Module-level state --------------------------------------------------------
 let mainWindow = null;
+let closeResponsePending = false;
 const getMainWindow = () => mainWindow;
 
 const playerWcIds = new Set();
@@ -396,6 +396,26 @@ function createWindow() {
   // Player/trailer sessions are configured on the first webview attach or
   // when the pop-out window opens, whichever comes first.
 
+  // Sanitize anything the renderer tries to attach. The app never sets a
+  // preload or Node integration on its own webviews, so strip both: a
+  // renderer compromise must not be able to mint a privileged guest.
+  mainWindow.webContents.on("will-attach-webview", (event, webPreferences, params) => {
+    delete webPreferences.preload;
+    webPreferences.nodeIntegration = false;
+    webPreferences.contextIsolation = true;
+    const src = params && params.src;
+    if (src && src !== "about:blank") {
+      try {
+        const parsed = new URL(src);
+        if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+          event.preventDefault();
+        }
+      } catch {
+        event.preventDefault();
+      }
+    }
+  });
+
   // Block popups from webviews, intercept fullscreen, lazy-init sessions
   mainWindow.webContents.on("did-attach-webview", (_, wc) => {
     if (!sessionsConfigured) {
@@ -563,7 +583,6 @@ function createWindow() {
   });
 
   // Intercept close if downloads are active
-  let closeResponsePending = false;
   mainWindow.on("close", (e) => {
     const running = downloadsIpc
       .getDownloads()
@@ -573,14 +592,6 @@ function createWindow() {
     if (closeResponsePending) return;
     closeResponsePending = true;
     mainWindow.webContents.send("confirm-close", { count: running.length });
-  });
-
-  ipcMain.on("close-response", (_, confirmed) => {
-    closeResponsePending = false;
-    if (confirmed) {
-      downloadsIpc.killAllDownloads();
-      mainWindow.destroy();
-    }
   });
 
   mainWindow.on("closed", () => {
@@ -603,7 +614,15 @@ playerIpc.register(getMainWindow, {
   writeSecretMigration: storageIpc.writeSecretMigration,
 });
 blockStats.init(getMainWindow);
-discordRpc.register(ipcMain);
+
+// Registered once: re-creating the window must not stack close handlers.
+ipcMain.on("close-response", (_, confirmed) => {
+  closeResponsePending = false;
+  if (confirmed && mainWindow && !mainWindow.isDestroyed()) {
+    downloadsIpc.killAllDownloads();
+    mainWindow.destroy();
+  }
+});
 
 // get-block-stats lives with its data
 ipcMain.handle("get-block-stats", () => blockStats.getBlockStats());
@@ -670,6 +689,15 @@ const getPipWindow = () => pipWindow;
 
 ipcMain.handle("open-pip-window", (_, { url, title }) => {
   if (!url || url === "about:blank") return { ok: false, reason: "no-url" };
+  // Only web content may be loaded into the popout; never file:// or javascript:.
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return { ok: false, reason: "invalid-scheme" };
+    }
+  } catch {
+    return { ok: false, reason: "invalid-url" };
+  }
 
   // Guarantee tracker/ad blocking is active in persist:player before any load
   if (!sessionsConfigured) {
@@ -784,8 +812,11 @@ if (!gotTheLock) {
   app.whenReady().then(() => {
     _bench("app ready");
     try {
+      // "automatic" keeps DoH when available but falls back to the system
+      // resolver; "secure" fails hard on networks that block DoH (captive
+      // portals, VPNs, corporate proxies) and breaks every request.
       app.configureHostResolver({
-        secureDnsMode: "secure",
+        secureDnsMode: "automatic",
         secureDnsServers: [
           "https://cloudflare-dns.com/dns-query",
           "https://dns.google/dns-query",
@@ -797,7 +828,9 @@ if (!gotTheLock) {
     createWindow();
   });
   app.on("window-all-closed", () => app.quit());
-  app.on("before-quit", () => discordRpc.shutdown());
+  app.on("before-quit", () => {
+    blockStats.flush();
+  });
   app.on("activate", () => {
     if (mainWindow === null) createWindow();
   });

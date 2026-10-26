@@ -21,13 +21,6 @@ import { getMangaChapters } from "./utils/mangaApi";
 import { getManhwaChapters } from "./utils/manhwaApi";
 import { tmdbFetch, setApiErrorHandlers, imgUrl, isAnimeContent } from "./utils/api";
 import { clearAppCaches } from "./utils/storage";
-import {
-  readDiscordRpcSettings,
-  applyDiscordRpcEnabled,
-  sendWatchingActivity,
-  sendIdleActivity,
-  clearActivity as clearDiscordActivity,
-} from "./utils/discordPresence";
 
 import Sidebar from "./components/Sidebar";
 import SearchModal from "./components/SearchModal";
@@ -55,7 +48,8 @@ export default function App() {
   const [apiKey, setApiKey] = useState(null);
   const [apiKeyLoaded, setApiKeyLoaded] = useState(false);
   const [skipped, setSkipped] = useState(false);
-  const [apiKeyStatus, setApiKeyStatus] = useState("checking"); // 'checking' | 'ok' | 'invalid_token' | 'unreachable'
+  const [apiKeyStatus, setApiKeyStatus] = useState("checking");
+  const [apiKeyCheckNonce, setApiKeyCheckNonce] = useState(0); // 'checking' | 'ok' | 'invalid_token' | 'unreachable'
   const [page, setPage] = useState(() => {
     const sp = storage.get("startPage");
     return sp && sp !== "history" ? sp : "home";
@@ -83,6 +77,10 @@ export default function App() {
   );
   const [progress, setProgress] = useState(() => storage.get("progress") || {});
   const [history, setHistory] = useState(() => (storage.get("history") || []).slice(0, 50));
+  const historyRef = useRef(history);
+  useEffect(() => {
+    historyRef.current = history;
+  }, [history]);
   const [watched, setWatched] = useState(() => storage.get("watched") || {});
   const [toast, setToast] = useState(null);
   const [updateBanner, setUpdateBanner] = useState(null);
@@ -110,16 +108,6 @@ export default function App() {
     return { accentColor: accentHex, subtitleLang };
   };
   const [playerSettings, setPlayerSettings] = useState(readPlayerSettings);
-
-  // ── Discord Rich Presence ──────────────────────────────────────────────────
-  // Off by default. `watchingEpisode` is filled in by TVPage (season/episode
-  // of whatever is currently open) via onEpisodeChange; MoviePage needs no
-  // extra data since title/poster already live on `selected`.
-  const [discordSettings, setDiscordSettings] = useState(
-    readDiscordRpcSettings,
-  );
-  const [watchingEpisode, setWatchingEpisode] = useState(null);
-  const watchStartRef = useRef(null);
 
   // ── Scheduled backup: run on startup if due ─────────────────────────────────
   useEffect(() => {
@@ -272,6 +260,9 @@ export default function App() {
   const runEpisodeCheck = useCallback(
     async (force = false) => {
       if (!apiKeyLoaded) return;
+      // Read history through a ref: the release scan must not restart every
+      // time a page of reading progress is saved.
+      const history = historyRef.current || [];
       const notifyPref = storage.get(STORAGE_KEYS.NOTIFY_NEW_EPISODE);
       if (!force && (notifyPref === false || notifyPref === 0)) return;
 
@@ -522,7 +513,7 @@ export default function App() {
         });
       }
     },
-    [apiKeyLoaded, apiKey, history],
+    [apiKeyLoaded, apiKey],
   );
 
   useEffect(() => {
@@ -535,6 +526,12 @@ export default function App() {
       clearTimeout(episodeDismissTimerRef.current);
     };
   }, [apiKeyLoaded, runEpisodeCheck]);
+
+  const handleUpdateDownload = useCallback((id, updates) => {
+    setDownloads((prev) =>
+      prev.map((d) => (d.id === id ? { ...d, ...updates } : d)),
+    );
+  }, []);
 
   const handleClearUpdates = useCallback(() => {
     setAvailableUpdates([]);
@@ -631,7 +628,7 @@ export default function App() {
         setApiKeyStatus("unreachable");
       });
     return () => controller.abort();
-  }, [apiKey]);
+  }, [apiKey, apiKeyCheckNonce]);
 
   // Load persisted downloads on startup + immediately prune missing files
   useEffect(() => {
@@ -801,50 +798,6 @@ export default function App() {
       window.removeEventListener("streambert:player-settings-changed", handler);
   }, []);
 
-  // ── Discord Rich Presence: sync settings + connect/disconnect ─────────────
-  useEffect(() => {
-    applyDiscordRpcEnabled(discordSettings.enabled);
-    if (!discordSettings.enabled) clearDiscordActivity();
-  }, [discordSettings.enabled]);
-
-  useEffect(() => {
-    const handler = () => setDiscordSettings(readDiscordRpcSettings());
-    window.addEventListener("streambert:discord-rpc-settings-changed", handler);
-    return () =>
-      window.removeEventListener(
-        "streambert:discord-rpc-settings-changed",
-        handler,
-      );
-  }, []);
-
-  // Reset episode info + elapsed-time anchor whenever the open title changes
-  useEffect(() => {
-    setWatchingEpisode(null);
-    watchStartRef.current = Date.now();
-  }, [selected?.id, selected?.media_type]);
-
-  // Push the current activity to Discord whenever what's on screen changes
-  useEffect(() => {
-    if (!discordSettings.enabled) return;
-    if ((page === "movie" || page === "tv") && selected) {
-      const title = selected.title || selected.name || "";
-      let subtitle = page === "movie" ? "Movie" : "Series";
-      if (page === "tv" && watchingEpisode) {
-        subtitle = `S${watchingEpisode.season} · E${watchingEpisode.episode}`;
-      }
-      sendWatchingActivity(
-        {
-          title,
-          subtitle,
-          posterUrl: imgUrl(selected.poster_path, "w500"),
-          startedAt: watchStartRef.current,
-        },
-        discordSettings,
-      );
-    } else {
-      sendIdleActivity(discordSettings);
-    }
-  }, [page, selected, watchingEpisode, discordSettings]);
   useEffect(() => {
     // Accent colour
     const accent = storage.get(STORAGE_KEYS.ACCENT_COLOR) || "red";
@@ -917,6 +870,15 @@ export default function App() {
   // ── Keyboard shortcuts ────────────────────────────────────────────────────
   useEffect(() => {
     const handler = (e) => {
+      const target = e.target;
+      const editable =
+        target &&
+        (target.tagName === "INPUT" ||
+          target.tagName === "TEXTAREA" ||
+          target.isContentEditable);
+      // Escape still closes overlays from a field; everything else must not
+      // steal the browser's native editing shortcuts.
+      if (editable && e.key !== "Escape") return;
       if ((e.metaKey || e.ctrlKey) && e.key === "f") {
         e.preventDefault();
         setShowSearch(true);
@@ -1015,8 +977,12 @@ export default function App() {
     }
   }, [navStack.length, navigateBack, selected, navigate]);
 
+  const [tvTarget, setTvTarget] = useState(null);
+
   const handleSelectResult = useCallback(
-    (item) => {
+    (item, target = null) => {
+      // Optional deep link: open a show directly at a specific episode.
+      setTvTarget(target || null);
       navigate(
         item.media_type === "manhwa"
           ? "manhwa"
@@ -1116,7 +1082,12 @@ export default function App() {
       episode: item.episode != null ? Number(item.episode) : null,
       episodeName: item.episodeName || null,
       chapter: item.chapter != null ? String(item.chapter) : null,
+      chapterId: item.chapterId != null ? String(item.chapterId) : null,
       page: item.page != null ? Number(item.page) : null,
+      scrollRatio:
+        typeof item.scrollRatio === "number" && !isNaN(item.scrollRatio)
+          ? Math.min(1, Math.max(0, Math.round(item.scrollRatio * 1000) / 1000))
+          : 0,
     };
     // Functional update - never reads stale history from closure
     setHistory((prev) => {
@@ -1367,9 +1338,10 @@ export default function App() {
               </span>
               <button
                 className="api-status-btn"
-                onClick={() =>
-                  setApiKeyStatus("checking") || window.location.reload()
-                }
+                onClick={() => {
+                  setApiKeyStatus("checking");
+                  setApiKeyCheckNonce((n) => n + 1);
+                }}
               >
                 Retry
               </button>
@@ -1505,7 +1477,8 @@ export default function App() {
                 onMarkUnwatched={markUnwatched}
                 downloads={downloads}
                 onGoToDownloads={handleGoToDownloads}
-                onEpisodeChange={setWatchingEpisode}
+                initialSeason={tvTarget?.season ?? null}
+                initialEpisode={tvTarget?.episode ?? null}
               />
             )}
             {page === "manga" && (
@@ -1563,11 +1536,7 @@ export default function App() {
                 onSettings={(section) =>
                   navigate("settings", { section: section || null })
                 }
-                onUpdateDownload={(id, updates) =>
-                  setDownloads((prev) =>
-                    prev.map((d) => (d.id === id ? { ...d, ...updates } : d)),
-                  )
-                }
+                onUpdateDownload={handleUpdateDownload}
               />
             )}
           </Suspense>

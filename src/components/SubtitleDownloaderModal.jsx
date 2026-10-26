@@ -1,6 +1,7 @@
 import { useState, useEffect, useRef, useCallback } from "react";
 import { TrashIcon, SubtitlesIcon, SettingsIcon } from "./Icons";
 import { storage, STORAGE_KEYS, secureStorage } from "../utils/storage";
+import { useModalKeys } from "../utils/useModalKeys";
 import { SUBTITLE_LANGUAGES } from "../utils/subtitles";
 
 // ── Subtitle Downloader Modal (for retroactive subtitle download) ──────────────
@@ -11,6 +12,7 @@ export default function SubtitleDownloaderModal({
   onSubtitleDeleted,
   onOpenSettings,
 }) {
+  const modalRef = useModalKeys(onClose);
   const defaultLang = storage.get(STORAGE_KEYS.SUBTITLE_LANG) || "en";
   const [subdlApiKey, setSubdlApiKey] = useState(null); // null = not yet loaded
   const [wyzieApiKey, setWyzieApiKey] = useState(null); // null = not yet loaded
@@ -140,6 +142,7 @@ export default function SubtitleDownloaderModal({
   return (
     <>
       <div
+        ref={modalRef}
         style={{
           position: "fixed",
           inset: 0,

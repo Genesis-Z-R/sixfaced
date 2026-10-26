@@ -9,6 +9,7 @@ const https = require("https");
 const http = require("http");
 const os = require("os");
 const zlib = require("zlib");
+const { isWithinAny, downloadRoots } = require("./pathSafety");
 
 // ── Robust fetch with timeout (AbortSignal.timeout is unreliable in some Electron versions) ──
 function fetchWithTimeout(url, options = {}, ms = 15000) {
@@ -108,7 +109,19 @@ function extractSubtitleLang(url) {
 
 // ── IPC registration ──────────────────────────────────────────────────────────
 
+function sweepTempSubtitles() {
+  try {
+    for (const name of fs.readdirSync(os.tmpdir())) {
+      if (!name.startsWith("streambert_sub_")) continue;
+      try {
+        fs.unlinkSync(path.join(os.tmpdir(), name));
+      } catch {}
+    }
+  } catch {}
+}
+
 function register({ getDownloads, saveDownloads }) {
+  sweepTempSubtitles();
   // ── Subtitle search ────────────────────────────────────────────────────────
   ipcMain.handle(
     "search-subtitles",
@@ -315,11 +328,12 @@ function register({ getDownloads, saveDownloads }) {
         fs.writeFileSync(tmpPath, extracted.data);
 
         // Schedule automatic cleanup so temp subtitles don't accumulate
-        setTimeout(() => {
+        const cleanupTimer = setTimeout(() => {
           try {
             if (fs.existsSync(tmpPath)) fs.unlinkSync(tmpPath);
           } catch {}
         }, TEMP_SUB_TTL_MS);
+        if (typeof cleanupTimer.unref === "function") cleanupTimer.unref();
 
         return {
           ok: true,
@@ -507,8 +521,17 @@ function register({ getDownloads, saveDownloads }) {
   // ── Delete a single subtitle file ─────────────────────────────────────────
   ipcMain.handle("delete-subtitle-file", (_, { downloadId, subtitlePath }) => {
     try {
-      if (subtitlePath && fs.existsSync(subtitlePath))
-        fs.unlinkSync(subtitlePath);
+      if (subtitlePath) {
+        const entry = getDownloads().find((d) => d.id === downloadId);
+        const roots = downloadRoots(entry ? [entry] : getDownloads());
+        if (!isWithinAny(roots, subtitlePath)) {
+          return {
+            ok: false,
+            error: "Refusing to delete subtitle outside download folder",
+          };
+        }
+        if (fs.existsSync(subtitlePath)) fs.unlinkSync(subtitlePath);
+      }
       if (downloadId) {
         const downloads = getDownloads();
         const idx = downloads.findIndex((d) => d.id === downloadId);

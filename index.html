@@ -3,6 +3,12 @@
     <head>
         <meta charset="UTF-8" />
         <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+        <!-- No remote scripts, no inline scripts, no plugins. Inline styles are
+             required by the app's style={{}} usage. -->
+        <meta
+          http-equiv="Content-Security-Policy"
+          content="default-src 'self' file: data: blob:; script-src 'self' file:; style-src 'self' 'unsafe-inline' file:; img-src 'self' file: data: blob: https: http://127.0.0.1:*; media-src 'self' file: data: blob: https: http://127.0.0.1:*; connect-src 'self' file: data: blob: https: http://127.0.0.1:*; font-src 'self' file: data:; object-src 'none'; base-uri 'self'; form-action 'none';"
+        />
         <title>Streambert</title>
         <link rel="icon" type="image/svg+xml" href="/logo.svg" />
     </head>

@@ -2156,6 +2156,7 @@ body.no-anim *::after {
     align-items: center;
     width: 100%;
     position: relative;
+    overflow-anchor: auto;
 }
 
 .manga-reader-loading,
@@ -2185,6 +2186,8 @@ body.no-anim *::after {
     margin-bottom: 2px;
     max-width: 900px;
     width: 100%;
+    min-height: 200px;
+    contain: layout;
 }
 
 .manga-page-img {
@@ -5055,3 +5058,188 @@ html[data-win-titlebar][data-maximized] .main {
 }
 
 
+
+
+/* ── Updates feed (bookmarked titles) ─────────────────────────────────────── */
+.updates-feed {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.updates-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-bottom: 2px;
+}
+.updates-summary-text {
+  font-size: 12px;
+  letter-spacing: 0.04em;
+  color: var(--text3);
+}
+.updates-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.update-row {
+  display: flex;
+  gap: 14px;
+  padding: 12px 14px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.update-row:hover {
+  background: var(--surface2);
+  border-color: var(--surface3);
+}
+.update-row:focus-visible {
+  outline: 2px solid var(--accent, var(--red));
+  outline-offset: 2px;
+}
+.update-row.has-new {
+  border-left: 2px solid var(--accent, var(--red));
+}
+.update-poster {
+  width: 52px;
+  height: 76px;
+  flex: none;
+  border-radius: 6px;
+  overflow: hidden;
+  background: var(--surface2);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+.update-poster img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  display: block;
+}
+.update-poster-fallback {
+  font-size: 20px;
+  font-weight: 600;
+  color: var(--text3);
+}
+.update-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.update-top {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.update-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: min(60ch, 100%);
+}
+.update-badge {
+  font-size: 9.5px;
+  font-weight: 700;
+  letter-spacing: 0.12em;
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: var(--accent, var(--red));
+  color: #0b0b0b;
+  white-space: nowrap;
+}
+.update-chip {
+  font-size: 9px;
+  letter-spacing: 0.12em;
+  padding: 3px 7px;
+  border-radius: 4px;
+  border: 1px solid var(--border);
+  color: var(--text3);
+  white-space: nowrap;
+}
+.update-chip.muted {
+  opacity: 0.7;
+}
+.update-chip.error {
+  color: #ff6b6b;
+  border-color: rgba(255, 107, 107, 0.4);
+}
+.update-positions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text2);
+}
+.update-pos {
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.045);
+}
+.update-pos.latest {
+  color: var(--accent, var(--red));
+  background: rgba(255, 255, 255, 0.07);
+}
+.update-arrow {
+  color: var(--text3);
+  font-size: 11px;
+}
+.update-muted {
+  color: var(--text3);
+  font-size: 12px;
+}
+.update-progress {
+  height: 3px;
+  max-width: 320px;
+  border-radius: 2px;
+  background: rgba(255, 255, 255, 0.08);
+  overflow: hidden;
+}
+.update-progress span {
+  display: block;
+  height: 100%;
+  background: var(--accent, var(--red));
+}
+.update-actions {
+  display: flex;
+  gap: 8px;
+  margin-top: 2px;
+  flex-wrap: wrap;
+}
+.update-actions .btn {
+  padding: 6px 12px;
+  font-size: 12px;
+}
+@media (max-width: 720px) {
+  .update-poster {
+    width: 42px;
+    height: 62px;
+  }
+  .update-actions .btn {
+    padding: 5px 10px;
+  }
+}
+
+/* Respect reduced-motion preferences: keep the UI usable without animation. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-delay: 0ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+    scroll-behavior: auto !important;
+  }
+}

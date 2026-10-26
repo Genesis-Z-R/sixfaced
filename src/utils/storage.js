@@ -91,11 +91,6 @@ export const STORAGE_KEYS = {
   // Per-episode fallback source when the default (typically AllManga) lacks
   // the title. Shape: { [epKey]: sourceId }.
   SOURCE_FAILOVER_CACHE: "sourceFailoverCache",
-  // Discord Rich Presence
-  DISCORD_RPC_ENABLED: "discordRpcEnabled",
-  DISCORD_RPC_SHOW_COVER: "discordRpcShowCover",
-  DISCORD_RPC_SHOW_TIMESTAMP: "discordRpcShowTimestamp",
-  DISCORD_RPC_SHOW_BUTTON: "discordRpcShowButton",
   // Controller / gamepad navigation
   GAMEPAD_ENABLED: "gamepadEnabled",
 };

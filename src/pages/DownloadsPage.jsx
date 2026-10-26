@@ -240,6 +240,8 @@ export default function DownloadsPage({
     };
   }, [highlightId]);
 
+  const prunedSubtitlesRef = useRef(new Set());
+
   useEffect(() => {
     if (!isElectron) return;
     let mounted = true;
@@ -264,14 +266,18 @@ export default function DownloadsPage({
       if (
         d.status === "completed" &&
         d.subtitlePaths?.length > 0 &&
-        window.electron.pruneSubtitlePaths
+        window.electron.pruneSubtitlePaths &&
+        !prunedSubtitlesRef.current.has(d.id)
       ) {
+        prunedSubtitlesRef.current.add(d.id);
         window.electron.pruneSubtitlePaths(d.id).then((res) => {
           if (!mounted) return;
           if (res?.ok && res.subtitlePaths.length !== d.subtitlePaths.length) {
             onUpdateDownload?.(d.id, { subtitlePaths: res.subtitlePaths });
           }
         });
+        // No re-prune on progress ticks: the set is intentionally permanent
+        // for this page session, so an entry is checked exactly once.
       }
     });
     // eslint-disable-next-line react-hooks/exhaustive-deps

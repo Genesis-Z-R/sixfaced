@@ -295,12 +295,14 @@ export default function TVPage({
   onMarkUnwatched,
   downloads,
   onGoToDownloads,
-  onEpisodeChange,
+  initialSeason = null,
+  initialEpisode = null,
 }) {
   const [details, setDetails] = useState(null);
   const [seasonData, setSeasonData] = useState(null);
   const [failedSeasons, setFailedSeasons] = useState(() => new Set()); // season numbers which give 404 on TMDB
   const [selectedSeason, setSelectedSeason] = useState(() => {
+    if (initialSeason != null) return Number(initialSeason);
     if (item.season != null) return Number(item.season);
     try {
       const hist = storage.get("history") || [];
@@ -392,6 +394,7 @@ export default function TVPage({
     pipWebContentsIdRef,
   });
   const [failoverToast, setFailoverToast] = useState(null);
+  const failoverToastTimerRef = useRef(null);
   // Always-current refs for interval callbacks, avoids stale closures without restarting the interval
   const saveProgressRef = useRef(saveProgress);
   saveProgressRef.current = saveProgress;
@@ -427,20 +430,6 @@ export default function TVPage({
   const ratingCountry = useMemo(() => getRatingCountry(storage), []);
   const restricted = isRestricted(rating.minAge, ageLimitSetting);
   const [seasonMenu, setSeasonMenu] = useState(null); // { x, y, seasonNum }
-
-  // Report the currently selected episode up to App.jsx for Discord RPC
-  useEffect(() => {
-    if (!onEpisodeChange) return;
-    if (!selectedEp) {
-      onEpisodeChange(null);
-      return;
-    }
-    onEpisodeChange({
-      season: selectedSeason,
-      episode: selectedEp.episode_number,
-      episodeName: selectedEp.name || null,
-    });
-  }, [onEpisodeChange, selectedSeason, selectedEp?.episode_number]);
 
   const resetAutoplayRef = useRef(() => {});
   const triggerAutoplayRef = useRef(() => {});
@@ -547,6 +536,15 @@ export default function TVPage({
       mounted = false;
     };
   }, [item.id, apiKey, ratingCountry]);
+
+  useEffect(() => {
+    return () => {
+      if (failoverToastTimerRef.current) {
+        clearTimeout(failoverToastTimerRef.current);
+        failoverToastTimerRef.current = null;
+      }
+    };
+  }, []);
 
   useEffect(() => {
     if (!apiKey || !item.id) return;
@@ -736,7 +734,13 @@ export default function TVPage({
             setFailoverToast(
               `AllManga stream unavailable — switched to ${nextSrcObj?.label || "VidSrc"}`,
             );
-            setTimeout(() => setFailoverToast(null), 4500);
+            if (failoverToastTimerRef.current) {
+              clearTimeout(failoverToastTimerRef.current);
+            }
+            failoverToastTimerRef.current = setTimeout(() => {
+              failoverToastTimerRef.current = null;
+              setFailoverToast(null);
+            }, 4500);
             setPlayerSource(next);
             setWebviewEp(selectedEp);
           } else {
@@ -954,17 +958,21 @@ export default function TVPage({
 
   const resumeInfo = useMemo(() => {
     const s =
-      item.season != null
-        ? Number(item.season)
-        : lastWatched?.season != null
-          ? Number(lastWatched.season)
-          : null;
+      initialSeason != null
+        ? Number(initialSeason)
+        : item.season != null
+          ? Number(item.season)
+          : lastWatched?.season != null
+            ? Number(lastWatched.season)
+            : null;
     const e =
-      item.episode != null
-        ? Number(item.episode)
-        : lastWatched?.episode != null
-          ? Number(lastWatched.episode)
-          : null;
+      initialEpisode != null
+        ? Number(initialEpisode)
+        : item.episode != null
+          ? Number(item.episode)
+          : lastWatched?.episode != null
+            ? Number(lastWatched.episode)
+            : null;
     if (!s || !e) return null;
     const pk = `tv_${item.id}_s${s}e${e}`;
     const pct = progress?.[pk] || 0;
@@ -979,6 +987,8 @@ export default function TVPage({
     item.season,
     item.episode,
     item.episodeName,
+    initialSeason,
+    initialEpisode,
     lastWatched,
     progress,
   ]);
@@ -1139,7 +1149,7 @@ export default function TVPage({
   );
 
   const currentProgressKey = selectedEp
-    ? `tv_${item.id}_s${selectedEp.season_number ?? selectedSeason}e${selectedEp.episode_number}`
+    ? `tv_${item.id}_s${selectedSeason}e${selectedEp.episode_number}`
     : null;
 
   // Check if currently-playing episode is already downloaded or downloading
@@ -2868,11 +2878,11 @@ export default function TVPage({
 // ── EpisodeCard ────────────────────────────────────────────────────────────
 // Isolated memo'd component so progress-bar updates (every 5s) only re-render
 // the one currently-playing card, not all 24+ cards in the grid.
-const _todayForEpisodes = (() => {
+function todayForEpisodes() {
   const d = new Date();
   d.setHours(0, 0, 0, 0);
   return d;
-})();
+}
 
 const EpisodeCard = memo(function EpisodeCard({
   ep,
@@ -2891,7 +2901,7 @@ const EpisodeCard = memo(function EpisodeCard({
   const pk = `tv_${itemId}_s${selectedSeason}e${ep.episode_number}`;
   const isPlaying = playing && selectedEpNumber === ep.episode_number;
   const epUnreleased = ep.air_date
-    ? new Date(ep.air_date) > _todayForEpisodes
+    ? new Date(ep.air_date) > todayForEpisodes()
     : false;
   const epDownload =
     downloadsByEpisodeKey.get(`s${selectedSeason}e${ep.episode_number}`) ??

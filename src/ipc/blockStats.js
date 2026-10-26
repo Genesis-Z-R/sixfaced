@@ -4,6 +4,7 @@
 const { app } = require("electron");
 const path = require("path");
 const fs = require("fs");
+const { writeJsonAtomic, readJsonWithBackup } = require("./fsSafe");
 
 const blockStatsFile = () =>
   path.join(app.getPath("userData"), "blockStats.json");
@@ -21,28 +22,29 @@ function init(getMainWindow) {
 }
 
 function loadBlockStats() {
-  try {
-    const raw = fs.readFileSync(blockStatsFile(), "utf8");
-    const parsed = JSON.parse(raw);
-    allBlockStats = {
-      total: parsed.total || 0,
-      domains: parsed.domains || {},
-    };
-  } catch {
-    allBlockStats = { total: 0, domains: {} };
-  }
+  const parsed = readJsonWithBackup(blockStatsFile(), {}, "block-stats");
+  allBlockStats = {
+    total: Number(parsed.total) || 0,
+    domains: parsed.domains && typeof parsed.domains === "object" ? parsed.domains : {},
+  };
 }
 
 function saveBlockStats() {
   try {
-    fs.writeFileSync(
-      blockStatsFile(),
-      JSON.stringify({
-        total: allBlockStats.total,
-        domains: allBlockStats.domains,
-      }),
-    );
+    writeJsonAtomic(blockStatsFile(), {
+      total: allBlockStats.total,
+      domains: allBlockStats.domains,
+    });
   } catch {}
+}
+
+/** Flush pending debounced state (called on quit). */
+function flush() {
+  if (blockSaveTimer) {
+    clearTimeout(blockSaveTimer);
+    blockSaveTimer = null;
+  }
+  saveBlockStats();
 }
 
 function recordBlockedRequest(url) {
@@ -85,4 +87,10 @@ function getBlockStats() {
   return { total: allBlockStats.total, domains: allBlockStats.domains };
 }
 
-module.exports = { init, loadBlockStats, recordBlockedRequest, getBlockStats };
+module.exports = {
+  init,
+  loadBlockStats,
+  recordBlockedRequest,
+  getBlockStats,
+  flush,
+};

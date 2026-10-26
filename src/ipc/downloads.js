@@ -9,6 +9,11 @@ const fs = require("fs");
 const https = require("https");
 const http = require("http");
 const os = require("os");
+const { writeJsonAtomic, readJsonWithBackup, keepBackup } = require("./fsSafe");
+const { isWithinAny, downloadRoots } = require("./pathSafety");
+const { assertPublicHttpUrl } = require("./netGuard");
+
+const LOG_PREFIX = "streambert_dl_";
 
 // ── Download store ────────────────────────────────────────────────────────────
 
@@ -34,28 +39,39 @@ function sendProgress(update) {
   }
 }
 
-function loadDownloads() {
+function sweepDownloaderLogs() {
+  // Per-session debug logs are disposable; clear leftovers from previous runs.
   try {
-    const raw = fs.readFileSync(downloadsFile(), "utf8");
-    const parsed = JSON.parse(raw);
-    // Deduplicate: keep only the newest entry per (tmdbId, mediaType, season, episode)
-    const seen = new Map();
-    const sorted = [...parsed].sort(
-      (a, b) =>
-        (b.completedAt || b.startedAt || 0) -
-        (a.completedAt || a.startedAt || 0),
-    );
-    for (const d of sorted) {
-      const key =
-        d.tmdbId && d.mediaType
-          ? `${d.tmdbId}|${d.mediaType}|${d.season ?? ""}|${d.episode ?? ""}`
-          : d.id;
-      if (!seen.has(key)) seen.set(key, d);
+    for (const name of fs.readdirSync(os.tmpdir())) {
+      if (!name.startsWith(LOG_PREFIX) || !name.endsWith(".log")) continue;
+      try {
+        fs.unlinkSync(path.join(os.tmpdir(), name));
+      } catch {}
     }
-    downloads = [...seen.values()];
-  } catch {
-    downloads = [];
+  } catch {}
+}
+
+function loadDownloads() {
+  const parsed = readJsonWithBackup(downloadsFile(), [], "downloads", {
+    allowArray: true,
+  });
+  const list = Array.isArray(parsed) ? parsed : [];
+  // Deduplicate: keep only the newest entry per (tmdbId, mediaType, season, episode)
+  const seen = new Map();
+  const sorted = list.sort(
+    (a, b) =>
+      (b.completedAt || b.startedAt || 0) - (a.completedAt || a.startedAt || 0),
+  );
+  for (const d of sorted) {
+    if (!d || typeof d !== "object") continue;
+    const key =
+      d.tmdbId && d.mediaType
+        ? `${d.tmdbId}|${d.mediaType}|${d.season ?? ""}|${d.episode ?? ""}`
+        : d.id;
+    if (key && !seen.has(key)) seen.set(key, d);
   }
+  downloads = [...seen.values()];
+  sweepDownloaderLogs();
 }
 
 function saveDownloads() {
@@ -63,7 +79,8 @@ function saveDownloads() {
     const toSave = downloads.filter(
       (d) => d.status !== "downloading" && d.status !== "error",
     );
-    fs.writeFileSync(downloadsFile(), JSON.stringify(toSave, null, 2));
+    keepBackup(downloadsFile(), { allowArray: true });
+    writeJsonAtomic(downloadsFile(), toSave);
   } catch {}
 }
 
@@ -108,19 +125,54 @@ function killAllDownloads() {
 
 // ── Subtitle file downloader (used during run-download completion) ─────────────
 
-function downloadSubtitleFile(url, destPath) {
-  return new Promise((resolve) => {
+async function downloadSubtitleFile(url, destPath) {
+  let parsedUrl;
+  try {
+    parsedUrl = new URL(url);
+  } catch {
+    return false;
+  }
+
+  // file: sources are only produced by the app's own temp subtitle extraction.
+  if (parsedUrl.protocol === "file:") {
     try {
-      const parsedUrl = new URL(url);
-      if (parsedUrl.protocol === "file:") {
-        try {
-          fs.copyFileSync(decodeURIComponent(parsedUrl.pathname), destPath);
-          resolve(true);
-        } catch {
-          resolve(false);
-        }
-        return;
-      }
+      const source = decodeURIComponent(parsedUrl.pathname);
+      const tmpRoot = os.tmpdir();
+      const inTmp = isWithinAny([tmpRoot], source);
+      const looksLikeOurs = path.basename(source).startsWith("streambert_sub_");
+      if (!inTmp || !looksLikeOurs) return false;
+      fs.copyFileSync(source, destPath);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  try {
+    await assertPublicHttpUrl(url);
+  } catch {
+    return false;
+  }
+
+  return new Promise((resolve) => {
+    let settled = false;
+    let file = null;
+    const finish = (ok) => {
+      if (settled) return;
+      settled = true;
+      resolve(ok);
+    };
+    const cleanup = () => {
+      try {
+        if (file) file.destroy();
+      } catch {}
+      try {
+        if (fs.existsSync(destPath)) fs.unlinkSync(destPath);
+      } catch {}
+      finish(false);
+    };
+
+    try {
       const lib = parsedUrl.protocol === "https:" ? https : http;
       const req = lib.get(
         url,
@@ -141,36 +193,31 @@ function downloadSubtitleFile(url, destPath) {
             const loc = res.headers.location.startsWith("http")
               ? res.headers.location
               : parsedUrl.origin + res.headers.location;
-            downloadSubtitleFile(loc, destPath).then(resolve);
+            res.resume();
+            downloadSubtitleFile(loc, destPath).then(finish);
             return;
           }
           if (res.statusCode !== 200) {
             res.resume();
-            resolve(false);
+            finish(false);
             return;
           }
-          const file = fs.createWriteStream(destPath);
+          file = fs.createWriteStream(destPath);
           res.pipe(file);
           file.on("finish", () => {
-            file.close();
-            resolve(true);
+            file.close(() => finish(true));
           });
-          file.on("error", () => {
-            try {
-              fs.unlinkSync(destPath);
-            } catch {}
-            resolve(false);
-          });
-          res.on("error", () => resolve(false));
+          file.on("error", cleanup);
+          res.on("error", cleanup);
         },
       );
-      req.on("error", () => resolve(false));
+      req.on("error", cleanup);
       req.setTimeout(20000, () => {
         req.destroy();
-        resolve(false);
+        cleanup();
       });
     } catch {
-      resolve(false);
+      cleanup();
     }
   });
 }
@@ -241,8 +288,22 @@ function register(getMainWindow) {
         if (!binaryPath) {
           return { ok: false, error: "Invalid or unknown downloader token" };
         }
+        // One active download per episode; a second request would orphan the
+        // first child process and race on the same output path.
+        const sameEpisodeActive = downloads.some(
+          (d) =>
+            d.status === "downloading" &&
+            d.tmdbId === (tmdbId || mediaId) &&
+            d.mediaType === mediaType &&
+            String(d.season ?? "") === String(season ?? "") &&
+            String(d.episode ?? "") === String(episode ?? ""),
+        );
+        if (sameEpisodeActive) {
+          return { ok: false, error: "This episode is already downloading" };
+        }
+
         const id = crypto.randomUUID();
-        const logPath = path.join(os.tmpdir(), `streambert_dl_${id}.log`);
+        const logPath = path.join(os.tmpdir(), `${LOG_PREFIX}${id}.log`);
 
         const entry = {
           id,
@@ -281,14 +342,15 @@ function register(getMainWindow) {
 
         downloads.push(entry);
 
-        // Remove stale entries for the same media
+        // Drop stale *finished* entries for the same media (never the live one).
         const isSameMedia = (d) =>
           d.id !== id &&
           d.tmdbId &&
           d.tmdbId === entry.tmdbId &&
           d.mediaType === entry.mediaType &&
           String(d.season ?? "") === String(entry.season ?? "") &&
-          String(d.episode ?? "") === String(entry.episode ?? "");
+          String(d.episode ?? "") === String(entry.episode ?? "") &&
+          d.status !== "downloading";
         downloads = downloads.filter((d) => !isSameMedia(d));
 
         const args = [
@@ -310,6 +372,8 @@ function register(getMainWindow) {
           stdio: ["ignore", "pipe", "pipe"],
         });
         activeProcs.set(id, proc);
+        // The token is single-use; the renderer must ask for a new one.
+        trustedBinaryPaths.delete(token);
 
         const handleLine = (line) => {
           const trimmed = line.trim();
@@ -722,23 +786,34 @@ function register(getMainWindow) {
   ipcMain.handle("delete-download", (_, { id, filePath }) => {
     try {
       const dlEntry = downloads.find((d) => d.id === id);
+      if (!dlEntry) return { ok: false, error: "Unknown download" };
       if (activeProcs.has(id)) {
         try {
           activeProcs.get(id).kill("SIGKILL");
         } catch {}
         activeProcs.delete(id);
       }
+      // Never unlink a renderer-supplied path outside this entry's folders.
       if (filePath) {
+        const roots = downloadRoots([dlEntry]);
+        if (!isWithinAny(roots, filePath)) {
+          return { ok: false, error: "Refusing to delete outside download folder" };
+        }
         try {
           if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
         } catch {}
       }
-      for (const sp of dlEntry?.subtitlePaths || []) {
+      for (const sp of dlEntry.subtitlePaths || []) {
         try {
           if (sp?.path && fs.existsSync(sp.path)) fs.unlinkSync(sp.path);
         } catch {}
       }
-      const dlPath = dlEntry?.downloadPath;
+      if (dlEntry.logPath) {
+        try {
+          if (fs.existsSync(dlEntry.logPath)) fs.unlinkSync(dlEntry.logPath);
+        } catch {}
+      }
+      const dlPath = dlEntry.downloadPath;
       if (dlPath) cleanupTempFiles(dlPath);
       downloads = downloads.filter((d) => d.id !== id);
       saveDownloads();
@@ -750,6 +825,14 @@ function register(getMainWindow) {
 
   ipcMain.handle("delete-all-downloads", async () => {
     try {
+      // Kill every running downloader first, otherwise the children keep
+      // writing to files that are about to disappear.
+      for (const [id, proc] of activeProcs) {
+        try {
+          proc.kill("SIGKILL");
+        } catch {}
+        activeProcs.delete(id);
+      }
       let deleted = 0,
         errors = 0;
       for (const dl of downloads) {
@@ -768,8 +851,14 @@ function register(getMainWindow) {
             if (sp?.path && fs.existsSync(sp.path)) fs.unlinkSync(sp.path);
           } catch {}
         }
+        if (dl.logPath) {
+          try {
+            if (fs.existsSync(dl.logPath)) fs.unlinkSync(dl.logPath);
+          } catch {}
+        }
       }
       downloads = [];
+      trustedBinaryPaths.clear();
       saveDownloads();
       return { ok: true, deleted, errors };
     } catch (e) {
