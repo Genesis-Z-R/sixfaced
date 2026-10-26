@@ -223,7 +223,7 @@ function register() {
         .toISOString()
         .replace(/[:.]/g, "-")
         .slice(0, 19);
-      const filename = `streambert-backup-${timestamp}.json`;
+      const filename = `sixfaced-backup-${timestamp}.json`;
       const fullPath = path.join(resolvedDir, filename);
       writeJsonAtomic(fullPath, {
         version: 1,
@@ -243,7 +243,12 @@ function register() {
       const keepCount = Math.max(1, Number(settings.keepCount) || 5);
       const entries = [];
       for (const f of fs.readdirSync(resolvedDir)) {
-        if (!f.startsWith("streambert-backup-") || !f.endsWith(".json")) continue;
+        if (
+          !f.endsWith(".json") ||
+          (!f.startsWith("sixfaced-backup-") && !f.startsWith("streambert-backup-"))
+        ) {
+          continue;
+        }
         try {
           entries.push({ name: f, mtime: fs.statSync(path.join(resolvedDir, f)).mtimeMs });
         } catch {}
@@ -276,7 +281,7 @@ function register() {
         2,
       );
 
-      // Primary: Documents folder ~/Documents/Streambert/streambert_backup.json
+      // Primary: Documents folder ~/Documents/Sixfaced/sixfaced_backup.json
       try {
         let docsDir = null;
         try {
@@ -285,18 +290,18 @@ function register() {
         if (!docsDir) {
           docsDir = path.join(app.getPath("home"), "Documents");
         }
-        const targetDir = path.join(docsDir, "Streambert");
+        const targetDir = path.join(docsDir, "Sixfaced");
         fs.mkdirSync(targetDir, { recursive: true });
-        writeFileAtomic(path.join(targetDir, "streambert_backup.json"), payload);
+        writeFileAtomic(path.join(targetDir, "sixfaced_backup.json"), payload);
       } catch (e) {
         console.warn("[AutoBackup] Documents write failed:", e.message);
       }
 
-      // Secondary: userData folder streambert_backup.json
+      // Secondary: userData folder sixfaced_backup.json
       try {
         const userDir = app.getPath("userData");
         fs.mkdirSync(userDir, { recursive: true });
-        writeFileAtomic(path.join(userDir, "streambert_backup.json"), payload);
+        writeFileAtomic(path.join(userDir, "sixfaced_backup.json"), payload);
       } catch (e) {
         console.warn("[AutoBackup] UserData write failed:", e.message);
       }

@@ -226,7 +226,7 @@ function ResetConfirmDialog({ onConfirm, onCancel }) {
             marginBottom: 10,
           }}
         >
-          RESET STREAMBERT?
+          RESET SIXFACED?
         </div>
         <div
           style={{
@@ -625,7 +625,8 @@ function VersionSection() {
           {checking ? "Checking…" : "Check for Updates"}
         </button>
 
-        {/* Update source toggle */}
+        {/* Update source toggle (hidden with a single source) */}
+        {Object.keys(UPDATE_SOURCES).length > 1 && (
         <div
           style={{
             display: "inline-flex",
@@ -655,6 +656,7 @@ function VersionSection() {
             </button>
           ))}
         </div>
+        )}
 
         {result && !result.error && result.hasUpdate && (
           <button
@@ -1149,7 +1151,7 @@ function BackupRestoreSection({ onRestored }) {
     const url = URL.createObjectURL(blob);
     const a = document.createElement("a");
     a.href = url;
-    a.download = `streambert-backup-${new Date().toISOString().slice(0, 10)}.json`;
+    a.download = `sixfaced-backup-${new Date().toISOString().slice(0, 10)}.json`;
     a.click();
     URL.revokeObjectURL(url);
   };
@@ -1822,7 +1824,7 @@ function StartPageSection() {
           lineHeight: 1.6,
         }}
       >
-        Choose which page opens when you launch Streambert.
+        Choose which page opens when you launch Sixfaced.
       </div>
       <div
         style={{
@@ -2120,7 +2122,7 @@ function SubtitleSettingsSection() {
                 }}
                 onClick={() =>
                   window.electron?.openExternal(
-                    "https://codeberg.org/truelockmc/streambert/src/branch/main/wyzie-tutorial.md",
+                    "https://github.com/Genesis-Z-R/sixfaced/blob/main/wyzie-tutorial.md",
                   )
                 }
               >
@@ -3454,7 +3456,7 @@ export default function SettingsPage({
       {showDeleteDlConfirm && (
         <ConfirmDialog
           title="DELETE ALL DOWNLOADS?"
-          description="This will permanently delete all video files downloaded through Streambert and remove them from the download list."
+          description="This will permanently delete all video files downloaded through Sixfaced and remove them from the download list."
           confirmLabel="Yes, Delete All"
           onConfirm={async () => {
             setShowDeleteDlConfirm(false);
@@ -3496,7 +3498,7 @@ export default function SettingsPage({
           SETTINGS
         </div>
         <div style={{ color: "var(--text3)", fontSize: 14, marginBottom: 48 }}>
-          App configuration for Streambert
+          App configuration for Sixfaced
         </div>
 
         {/* ══════════════════════════════════════════════════════════════════ */}
@@ -4103,7 +4105,7 @@ export default function SettingsPage({
               }}
             >
               Downloaded videos will be saved here. Make sure the folder exists
-              and Streambert has write access to it.
+              and Sixfaced has write access to it.
             </div>
             <div
               style={{
@@ -4212,7 +4214,7 @@ export default function SettingsPage({
             <div style={{ padding: "22px 24px" }}>
               <CleanRow
                 title="Install Location"
-                description="Opens the folder where Streambert is installed."
+                description="Opens the folder where Sixfaced is installed."
                 buttonLabel="Open Folder"
                 onAction={async () => {
                   const p = await window.electron?.getInstallPath?.();
@@ -4258,7 +4260,7 @@ export default function SettingsPage({
             <div style={{ padding: "22px 24px" }}>
               <CleanRow
                 title="Delete All Downloads"
-                description="Permanently deletes all video files that were downloaded through Streambert and removes them from the download list. Only files downloaded through the app will be deleted, nothing else in your folder is touched."
+                description="Permanently deletes all video files that were downloaded through Sixfaced and removes them from the download list. Only files downloaded through the app will be deleted, nothing else in your folder is touched."
                 buttonLabel="Delete All"
                 onAction={() =>
                   new Promise((resolve) => {
@@ -4324,7 +4326,7 @@ export default function SettingsPage({
                       lineHeight: 1.6,
                     }}
                   >
-                    Completely resets Streambert to factory defaults, clears all
+                    Completely resets Sixfaced to factory defaults, clears all
                     settings, API Token, saved library, watch history/progress,
                     and all cached data. Your downloaded video files will not be
                     touched.

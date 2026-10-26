@@ -344,11 +344,10 @@ export default function ManhwaPage({
   );
   const updatesLoading = useMemo(
     () =>
-      (manhwaSaved || []).some(
-        (item) =>
-          !updatesState[`manhwa:${item.id}`] ||
-          updatesState[`manhwa:${item.id}`].status !== "ready",
-      ),
+      (manhwaSaved || []).some((item) => {
+        const status = updatesState[`manhwa:${item.id}`]?.status;
+        return !status || status === "loading" || status === "queued";
+      }),
     [manhwaSaved, updatesState],
   );
 

@@ -127,7 +127,7 @@ export default function App() {
 
   // ── Real-time Auto-Backup to JSON ──────────────────────────────────────────
   // Automatically writes all bookmarks, history, progress, watched & settings
-  // to ~/Documents/Streambert/streambert_backup.json and userData whenever something changes.
+  // to ~/Documents/Sixfaced/sixfaced_backup.json and userData whenever something changes.
   useEffect(() => {
     if (!window.electron?.saveAutoBackup) return;
     const timer = setTimeout(() => {
@@ -1571,7 +1571,7 @@ export default function App() {
               color: "#fff",
             }}
           >
-            <span>🎉 Streambert v{updateBanner.latest} is available!</span>
+            <span>🎉 Sixfaced v{updateBanner.latest} is available!</span>
             <button
               onClick={() => setShowUpdateModal(true)}
               style={{

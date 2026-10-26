@@ -1,4 +1,4 @@
-// ── IPC: Asura Scans & ComicK Korean Manhwa Provider for Streambert ────────
+// ── IPC: Asura Scans & ComicK Korean Manhwa Provider for Sixfaced ────────
 // Dedicated high-speed backend for Korean Manhwa (webtoons).
 // Provides instant discovery, full English translations, rich metadata, and vertical continuous pages.
 

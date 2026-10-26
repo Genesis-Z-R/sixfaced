@@ -112,7 +112,12 @@ function extractSubtitleLang(url) {
 function sweepTempSubtitles() {
   try {
     for (const name of fs.readdirSync(os.tmpdir())) {
-      if (!name.startsWith("streambert_sub_")) continue;
+      if (
+        !name.startsWith("sixfaced_sub_") &&
+        !name.startsWith("streambert_sub_")
+      ) {
+        continue;
+      }
       try {
         fs.unlinkSync(path.join(os.tmpdir(), name));
       } catch {}
@@ -158,7 +163,7 @@ function register({ getDownloads, saveDownloads }) {
 
           const res = await fetchWithTimeout(
             `https://api.subdl.com/api/v1/subtitles?${params}`,
-            { headers: { "User-Agent": "Streambert" } },
+            { headers: { "User-Agent": "Sixfaced" } },
             12000,
           );
           if (!res.ok) {
@@ -309,7 +314,7 @@ function register({ getDownloads, saveDownloads }) {
         const downloadUrl = `https://dl.subdl.com${subdlPath}`;
         const res = await fetchWithTimeout(
           downloadUrl,
-          { headers: { "User-Agent": "Streambert" } },
+          { headers: { "User-Agent": "Sixfaced" } },
           30000,
         );
         if (!res.ok)
@@ -323,7 +328,7 @@ function register({ getDownloads, saveDownloads }) {
         const safeName = path.basename(extracted.name);
         const tmpPath = path.join(
           os.tmpdir(),
-          `streambert_sub_${Date.now()}_${safeName}`,
+          `sixfaced_sub_${Date.now()}_${safeName}`,
         );
         fs.writeFileSync(tmpPath, extracted.data);
 
@@ -424,7 +429,7 @@ function register({ getDownloads, saveDownloads }) {
               const subdlPath = decodeURIComponent(parts.slice(2).join("_"));
               const res = await fetchWithTimeout(
                 `https://dl.subdl.com${subdlPath}`,
-                { headers: { "User-Agent": "Streambert" } },
+                { headers: { "User-Agent": "Sixfaced" } },
                 30000,
               );
               if (!res.ok) continue;

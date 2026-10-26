@@ -21,30 +21,21 @@ let _updateInFlight = false;
 //
 // IMPORTANT: GitHub and Codeberg use completely different asset URL structures:
 //   GitHub:   https://github.com/<owner>/<repo>/releases/download/<tag>/<file>
-//   Codeberg: https://codeberg.org/attachments/<uuid>
-//             (Gitea stores release attachments under /attachments/, not under the repo path)
 const TRUSTED_UPDATE_SOURCES = [
   {
     id: "github",
     origin: "https://github.com",
     // Must match the full repo path so an attacker can't use
     // a different repo on github.com to serve a malicious binary.
-    pathPrefix: "/truelockmc/streambert/releases/download/",
+    pathPrefix: "/Genesis-Z-R/sixfaced/releases/download/",
     redirectHosts: [
       "github.com",
       "objects.githubusercontent.com",
       "release-assets.githubusercontent.com",
     ],
   },
-  {
-    id: "codeberg",
-    origin: "https://codeberg.org",
-    // Codeberg (Gitea) release assets are served from /attachments/<uuid>.
-    // The UUID is random and unguessable.
-    pathPrefix: "/attachments/",
-    redirectHosts: ["codeberg.org"],
-  },
 ];
+
 
 // Returns the matching trusted source for a parsed URL, or null.
 function findTrustedUpdateSource(parsedUrl) {
@@ -322,7 +313,7 @@ function register(getMainWindow, { writeSecretMigration }) {
     try {
       const res = await fetch(`${url}.sha256`, {
         signal: AbortSignal.timeout(8000),
-        headers: { "User-Agent": "Streambert-AutoUpdater" },
+        headers: { "User-Agent": "Sixfaced-AutoUpdater" },
       });
       if (!res.ok) return "unavailable";
       const expected = (await res.text()).trim().split(/\s+/)[0].toLowerCase();
@@ -387,7 +378,7 @@ function register(getMainWindow, { writeSecretMigration }) {
       // and makes the temp path predictable for other local processes.
       const destPath = path.join(
         os.tmpdir(),
-        `streambert-update-${crypto.randomUUID()}${ext}`,
+        `sixfaced-update-${crypto.randomUUID()}${ext}`,
       );
 
       await new Promise((resolve, reject) => {
@@ -415,7 +406,7 @@ function register(getMainWindow, { writeSecretMigration }) {
             reqUrl,
             {
               headers: {
-                "User-Agent": "Streambert-AutoUpdater",
+                "User-Agent": "Sixfaced-AutoUpdater",
                 Accept: "application/octet-stream",
               },
             },
@@ -507,7 +498,7 @@ function register(getMainWindow, { writeSecretMigration }) {
         fs.chmodSync(destPath, 0o755);
         const currentAppImage = process.env.APPIMAGE;
         if (currentAppImage) {
-          const scriptPath = path.join(os.tmpdir(), "streambert-update.sh");
+          const scriptPath = path.join(os.tmpdir(), "sixfaced-update.sh");
           const pid = process.pid;
           const target = currentAppImage;
           const scriptContent =
@@ -626,7 +617,6 @@ function register(getMainWindow, { writeSecretMigration }) {
   // CSP. Fetch them here in the main process and return a base64 data-URI.
 
   const ALLOWED_IMAGE_HOSTS = new Set([
-    "codeberg.org",
     "github.com",
     "user-images.githubusercontent.com",
     "private-user-images.githubusercontent.com",
@@ -648,7 +638,7 @@ function register(getMainWindow, { writeSecretMigration }) {
     https
       .get(
         url,
-        { headers: { "User-Agent": "Streambert-ReleaseNotes" } },
+        { headers: { "User-Agent": "Sixfaced-ReleaseNotes" } },
         (res) => {
           if (
             res.statusCode >= 300 &&

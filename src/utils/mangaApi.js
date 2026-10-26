@@ -1,4 +1,4 @@
-// ── MangaPill Unified Client for Streambert ─────────────────────────────────
+// ── MangaPill Unified Client for Sixfaced ─────────────────────────────────
 // Connects the frontend UI directly to the high-speed MangaPill IPC backend.
 // Replaces MangaDex entirely to eliminate 0-page licensing blocks, missing covers,
 // and publisher DMCA takedown dead-ends.

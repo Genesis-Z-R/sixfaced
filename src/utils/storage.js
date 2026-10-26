@@ -1,5 +1,7 @@
 // localStorage-based persistence (works in both Vite dev and prod)
 
+// Kept as "streambert_" after the Sixfaced rename on purpose: changing it
+// would orphan every existing library entry, bookmark and reading position.
 const PREFIX = "streambert_";
 
 export const storage = {

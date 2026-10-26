@@ -211,9 +211,10 @@ export default function MediaHubPage({
   );
   const updatesLoading = useMemo(
     () =>
-      (mediumSaved || []).some(
-        (item) => updatesState[`${item.media_type || "media"}:${item.id}`]?.status !== "ready",
-      ),
+      (mediumSaved || []).some((item) => {
+        const status = updatesState[`${item.media_type || "media"}:${item.id}`]?.status;
+        return !status || status === "loading" || status === "queued";
+      }),
     [mediumSaved, updatesState],
   );
 

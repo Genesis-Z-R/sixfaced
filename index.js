@@ -1,4 +1,4 @@
-// -- Streambert main process entry point ---------------------------------------
+// -- Sixfaced main process entry point ---------------------------------------
 // Responsible for: window creation, session setup, ad-blocking, scheduled
 // backup trigger, and app lifecycle. All heavy IPC logic lives in src/ipc/.
 
@@ -112,6 +112,10 @@ function isHostBlocked(url) {
     return false;
   }
 }
+
+// Keep the application name stable across dev and packaged builds: it defines
+// the userData folder, and therefore where the library lives.
+app.setName("Sixfaced");
 
 // -- Module-level state --------------------------------------------------------
 let mainWindow = null;
@@ -296,6 +300,55 @@ function attachPlayerKeyboardHandling(wc, targetWindow) {
       }
     } catch {}
   });
+}
+
+/**
+ * One-time profile migration from the old "streambert" app name.
+ * Copies only the data that matters (library, history, settings, downloads),
+ * never the HTTP/GPU caches.
+ */
+function migrateLegacyProfile() {
+  try {
+    const newDir = app.getPath("userData");
+    const oldDir = path.join(path.dirname(newDir), "streambert");
+    if (path.resolve(newDir) === path.resolve(oldDir)) return;
+
+    const marker = path.join(newDir, ".migrated-from-streambert");
+    if (fs.existsSync(marker)) return;
+
+    const hasExistingData = [
+      "Local Storage",
+      "IndexedDB",
+      "secure-store.json",
+      "downloads.json",
+    ].some((name) => fs.existsSync(path.join(newDir, name)));
+    if (hasExistingData) {
+      fs.writeFileSync(marker, `existing profile ${new Date().toISOString()}`);
+      return;
+    }
+    if (!fs.existsSync(oldDir)) return;
+
+    fs.mkdirSync(newDir, { recursive: true });
+    const entries = [
+      "Local Storage",
+      "Session Storage",
+      "IndexedDB",
+      "secure-store.json",
+      "downloads.json",
+      "blockStats.json",
+      "scheduled-backup-settings.json",
+    ];
+    for (const entry of entries) {
+      const from = path.join(oldDir, entry);
+      const to = path.join(newDir, entry);
+      if (!fs.existsSync(from)) continue;
+      fs.cpSync(from, to, { recursive: true, force: false, errorOnExist: false });
+    }
+    fs.writeFileSync(marker, new Date().toISOString());
+    console.log("[profile] migrated data from the Streambert profile");
+  } catch (error) {
+    console.warn("[profile] migration skipped:", error.message);
+  }
 }
 
 function createWindow() {
@@ -825,6 +878,7 @@ if (!gotTheLock) {
     } catch (e) {
       console.warn("[dns] failed to configure host resolver:", e);
     }
+    migrateLegacyProfile();
     createWindow();
   });
   app.on("window-all-closed", () => app.quit());

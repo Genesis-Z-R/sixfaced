@@ -1,0 +1,27 @@
+Sixfaced
+Copyright (C) 2026 Genesis-Z-R
+
+This program is a modified fork of Streambert
+(https://github.com/truelockmc/streambert), Copyright (C) truelockmc,
+and is distributed under the GNU General Public License, version 3.
+
+Modifications in this fork include, among others:
+  - rebranding to Sixfaced (name, identifiers, icon, documentation)
+  - removal of the Discord Rich Presence integration
+  - bookmark-based "Updates" tabs for manga, manhwa, series and anime
+  - reading-position restoration fixes and request cancellation
+  - security hardening of IPC handlers, proxies and the auto-updater
+  - ESLint configuration and additional unit tests
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+
+You should have received a copy of the GNU General Public License
+along with this program.  If not, see <https://www.gnu.org/licenses/>.

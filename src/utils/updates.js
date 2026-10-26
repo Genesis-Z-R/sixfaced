@@ -1,10 +1,9 @@
 // ── App Update Utilities ──────────────────────────────────────────────────────
 // Centralised update-check logic. Imported by both App.jsx and SettingsPage.jsx.
 //
-// Supports multiple release sources (GitHub + Codeberg).
+// Releases are published on GitHub only.
 
-export const GITHUB_REPO = "truelockmc/streambert";
-export const CODEBERG_REPO = "truelockmc/streambert";
+export const GITHUB_REPO = "Genesis-Z-R/sixfaced";
 
 // ── Source registry ───────────────────────────────────────────────────────────
 // Each entry just describes *where* to fetch from and how to build the
@@ -17,14 +16,8 @@ export const UPDATE_SOURCES = {
     headers: { Accept: "application/vnd.github+json" },
     fallbackUrl: `https://github.com/${GITHUB_REPO}/releases/latest`,
   },
-  codeberg: {
-    id: "codeberg",
-    label: "Codeberg",
-    apiUrl: `https://codeberg.org/api/v1/repos/${CODEBERG_REPO}/releases?limit=10`,
-    headers: { Accept: "application/json" },
-    fallbackUrl: `https://codeberg.org/${CODEBERG_REPO}/releases`,
-  },
 };
+
 
 export const DEFAULT_UPDATE_SOURCE = "github";
 
@@ -53,7 +46,7 @@ async function getCurrentVersion() {
 }
 
 /**
- * Check for updates against a given source ("github" | "codeberg").
+ * Check for updates against the configured source (GitHub).
  * Same logic, same validation, regardless of source, only the API
  * endpoint and headers differ (see UPDATE_SOURCES above).
  */
@@ -106,10 +99,8 @@ export async function checkForUpdates(source = DEFAULT_UPDATE_SOURCE) {
 }
 
 /**
- * Like checkForUpdates(), but if the chosen source fails (network error,
- * repo gone, API down) it automatically retries with the other source.
- * The result includes `usedFallback: true` when that happened so the UI
- * can optionally show a notice.
+ * Wrapper kept for API compatibility. With a single source there is nothing
+ * to fall back to, so failures propagate as-is.
  */
 export async function checkForUpdatesWithFallback(
   source = DEFAULT_UPDATE_SOURCE,

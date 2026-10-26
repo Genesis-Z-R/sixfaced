@@ -1,4 +1,4 @@
-// ── Korean Manhwa Unified Client for Streambert ──────────────────────────────
+// ── Korean Manhwa Unified Client for Sixfaced ──────────────────────────────
 // Connects the frontend UI directly to the high-speed Manhwa IPC backend (Asura Scans + ComicK).
 // Provides instant discovery, full English translations, and vertical continuous scroll webtoons.
 

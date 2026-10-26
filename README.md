@@ -1,20 +1,17 @@
-[![Downloads@latest](https://img.shields.io/github/downloads/truelockmc/streambert/latest/total?style=for-the-badge)](https://codeberg.org/truelockmc/streambert/releases/latest/)
-[![Release Version Badge](https://img.shields.io/github/v/release/truelockmc/streambert?style=for-the-badge)](https://github.com/truelockmc/streambert/releases)
-[![Issues Badge](https://img.shields.io/github/issues/truelockmc/streambert?style=for-the-badge)](https://github.com/truelockmc/streambert/issues)
-[![Closed Issues Badge](https://img.shields.io/github/issues-closed/truelockmc/streambert?color=%238256d0&style=for-the-badge)](https://github.com/truelockmc/streambert/issues?q=is%3Aissue+is%3Aclosed)<br>
+# Sixfaced
+A cross-platform Electron desktop app to stream and download movies, TV series and anime — with a manga/manhwa reader, bookmark update tracking, and a local library.
 
-[![GitHub](https://img.shields.io/badge/GitHub-truelockmc%2Fstreambert-181717?style=for-the-badge&logo=github)](https://github.com/truelockmc/streambert)
-[![Codeberg](https://img.shields.io/badge/Codeberg-truelockmc%2Fstreambert-2185D0?style=for-the-badge&logo=codeberg)](https://codeberg.org/truelockmc/streambert)
-[![AUR Version](https://img.shields.io/aur/version/streambert-bin?style=for-the-badge&logo=archlinux)](https://aur.archlinux.org/packages/streambert-bin)
-# Streambert
-A cross-platform Electron Desktop App to stream and download any Movie, TV Series or Anime in the World. Zero Ads and Tracking[*](#privacy-disclaimer) <br></br>
-<a href="https://trendshift.io/repositories/31115" target="_blank" rel="noopener noreferrer"><img src="https://trendshift.io/api/badge/repositories/31115" alt="truelockmc%2Fstreambert | Trendshift" width="250" height="55"/></a>
+[![Release](https://img.shields.io/github/v/release/Genesis-Z-R/sixfaced?style=for-the-badge)](https://github.com/Genesis-Z-R/sixfaced/releases)
+[![License](https://img.shields.io/badge/license-GPL--3.0-blue?style=for-the-badge)](LICENSE)
 
 ![Logo](public/logo.svg)
 
+> **Sixfaced** is a personal fork of [Streambert](https://github.com/truelockmc/streambert) by **truelockmc**, rebranded and extended.
+> Both projects are free software under the GNU GPL v3. See [NOTICE](NOTICE) for attribution and a list of changes.
+
 [Installation](#requirements)
 
-## Why Streambert?
+## Why Sixfaced?
 - 🎦 **Streaming:** Stream any Movie, Anime or TV Series from around the World.
 - 📥 **Downloading:** Download anything you want to watch.
 - 📃 **Subtitles:** Download and manage Subtitles.
@@ -33,8 +30,6 @@ A cross-platform Electron Desktop App to stream and download any Movie, TV Serie
 ![Customize](screenshots/customize-2.png)
 ![Download Subtitles](screenshots/subs.png)
 ![Download Everything](screenshots/download.png)
----
-[![Stargazers](https://reporoster.com/stars/dark/truelockmc/streambert)](https://github.com/truelockmc/streambert/stargazers)
 ---
 ## Streaming
 The Application mainly gets Video Streams from VidSrc (you can also Stream from videasy and vidking). <br></br>
@@ -55,7 +50,7 @@ Media Files for Animes are scraped from AllManga.to (i stole this mechanic from 
 
 ## Requirements
 
-- [Node.js](https://nodejs.org/) (>=22.12.0) installed (only if you aren't using [prebuilt Binaries](https://codeberg.org/truelockmc/streambert/releases/latest))
+- [Node.js](https://nodejs.org/) (>=22.12.0) installed (only if you aren't using [prebuilt Binaries](https://github.com/Genesis-Z-R/sixfaced/releases/latest))
 - A free TMDB API Read Access Token ([Guide on how to get one](tmdb-tutorial.md))
 - For downloading, [this Program](https://github.com/truelockmc/vid-dl-cli-only/releases/latest) somewhere on your PC and [ffmpeg](https://ffmpeg.org/download.html) installed
 
@@ -66,7 +61,7 @@ It's saved locally, you only need to do this once.
 
 ### Linux, Manual (.deb / .AppImage / .pacman)
 
-Download the latest `.deb` `.pacman` or `.AppImage` from the [Releases](https://codeberg.org/truelockmc/streambert/releases/latest) page.
+Download the latest `.deb` `.pacman` or `.AppImage` from the [Releases](https://github.com/Genesis-Z-R/sixfaced/releases/latest) page.
 ```bash
 # .deb
 sudo dpkg -i streambert_*.deb
@@ -75,15 +70,15 @@ sudo dpkg -i streambert_*.deb
 sudo pacman -U streambert-*.pacman
 
 # .AppImage (you can also do it with Gearlever)
-chmod +x Streambert-x64.AppImage && ./Streambert-x64.AppImage
+chmod +x Sixfaced-x64.AppImage && ./Sixfaced-x64.AppImage
 ```
 
 ### Windows
 
-Download the latest `Streambert Setup *.exe` from the [Releases](https://codeberg.org/truelockmc/streambert/releases/latest) page and run it.
+Download the latest `Sixfaced Setup *.exe` from the [Releases](https://github.com/Genesis-Z-R/sixfaced/releases/latest) page and run it.
 
 ### macOS
-Download the latest `Streambert-*-universal.dmg` from the [Releases](https://codeberg.org/truelockmc/streambert/releases/latest) page, open it and drag Streambert to your Applications folder.
+Download the latest `Sixfaced-*-universal.dmg` from the [Releases](https://github.com/Genesis-Z-R/sixfaced/releases/latest) page, open it and drag Sixfaced to your Applications folder.
 
 ---
 
@@ -141,16 +136,16 @@ Everyone is welcome to contribute to this project.
 Before contributing please make sure to read the [Contributing Guidelines](CONTRIBUTING.md) and act accordingly.
 
 ## Privacy Disclaimer
-Streambert itself does not collect ANY data. There is no centralized service which the app relies on.
+Sixfaced itself does not collect ANY data. There is no centralized service which the app relies on.
 However, the streaming sources and github (for downloading updates in-app) may still collect your data.
 
-Streambert has built-in tracker/- and adblocking, but obviously that is not perfect.
+Sixfaced has built-in tracker/- and adblocking, but obviously that is not perfect.
 
 ## Legal Disclaimer
 
 **IMPORTANT: This application is for educational and personal use only.**
 
-- Streambert does not host, store, or distribute any copyrighted content
+- Sixfaced does not host, store, or distribute any copyrighted content
 - All content is sourced from third-party providers and websites
 - Users are solely responsible for ensuring they have legal rights to access any content
 - The developer does not endorse or encourage copyright infringement
@@ -167,7 +162,6 @@ This application is provided "as is" for educational purposes. The developer:
 - Does not control third-party content providers
 - Encourages users to support content creators through legal means
 
-[![RepoStars](https://repostars.dev/api/embed?repo=truelockmc%2Fstreambert&theme=dark)](https://repostars.dev/?repos=truelockmc%2Fstreambert&theme=dark)
 
 <details>
     <summary>Project Structure</summary>

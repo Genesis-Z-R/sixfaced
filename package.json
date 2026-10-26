@@ -1,10 +1,10 @@
 {
-  "name": "streambert",
-  "version": "2.6.0",
-  "description": "Streambert Desktop App",
+  "name": "sixfaced",
+  "version": "1.0.0",
+  "description": "Sixfaced Desktop App",
   "author": {
-    "name": "truelockmc",
-    "email": "anonyson@proton.me"
+    "name": "Genesis-Z-R",
+    "email": "ansahdonkorramseyowusu@gmail.com"
   },
   "license": "GPL-3.0",
   "main": "index.js",
@@ -46,8 +46,8 @@
     "vite": "^7.3.1"
   },
   "build": {
-    "appId": "com.truelockmc.streambert",
-    "productName": "Streambert",
+    "appId": "com.genesiszr.sixfaced",
+    "productName": "Sixfaced",
     "asar": true,
     "compression": "normal",
     "directories": {
@@ -104,7 +104,7 @@
       "createStartMenuShortcut": true,
       "selectPerMachineByDefault": false,
       "license": "LICENSE",
-      "uninstallDisplayName": "Uninstall Streambert",
+      "uninstallDisplayName": "Uninstall Sixfaced",
       "installerSidebar": "public/installer-sidebar.bmp"
     },
     "win": {
@@ -114,7 +114,7 @@
       ]
     },
     "mac": {
-      "icon": "public/icon.png",
+      "icon": "build/icon.icns",
       "target": [
         {
           "target": "dmg",
@@ -170,11 +170,11 @@
       "icon": "public/sized",
       "desktop": {
         "entry": {
-          "Name": "Streambert",
-          "Comment": "Streambert Desktop App",
+          "Name": "Sixfaced",
+          "Comment": "Sixfaced Desktop App",
           "Categories": "AudioVideo;Video;Player;Multimedia;Internet;",
           "Icon": "streambert",
-          "StartupWMClass": "Streambert"
+          "StartupWMClass": "Sixfaced"
         }
       }
     },
@@ -196,5 +196,11 @@
     "electron@40.10.6": true,
     "electron-winstaller@5.4.0": true,
     "esbuild@0.28.1": true
-  }
+  },
+  "productName": "Sixfaced",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Genesis-Z-R/sixfaced.git"
+  },
+  "homepage": "https://github.com/Genesis-Z-R/sixfaced"
 }

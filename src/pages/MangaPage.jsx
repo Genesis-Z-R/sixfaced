@@ -343,11 +343,10 @@ export default function MangaPage({
   );
   const updatesLoading = useMemo(
     () =>
-      (mangaSaved || []).some(
-        (item) =>
-          !updatesState[`manga:${item.id}`] ||
-          updatesState[`manga:${item.id}`].status !== "ready",
-      ),
+      (mangaSaved || []).some((item) => {
+        const status = updatesState[`manga:${item.id}`]?.status;
+        return !status || status === "loading" || status === "queued";
+      }),
     [mangaSaved, updatesState],
   );
 

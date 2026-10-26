@@ -13,7 +13,8 @@ const { writeJsonAtomic, readJsonWithBackup, keepBackup } = require("./fsSafe");
 const { isWithinAny, downloadRoots } = require("./pathSafety");
 const { assertPublicHttpUrl } = require("./netGuard");
 
-const LOG_PREFIX = "streambert_dl_";
+const LOG_PREFIX = "sixfaced_dl_";
+const LEGACY_LOG_PREFIX = "streambert_dl_";
 
 // ── Download store ────────────────────────────────────────────────────────────
 
@@ -43,7 +44,12 @@ function sweepDownloaderLogs() {
   // Per-session debug logs are disposable; clear leftovers from previous runs.
   try {
     for (const name of fs.readdirSync(os.tmpdir())) {
-      if (!name.startsWith(LOG_PREFIX) || !name.endsWith(".log")) continue;
+      if (
+        !name.endsWith(".log") ||
+        (!name.startsWith(LOG_PREFIX) && !name.startsWith(LEGACY_LOG_PREFIX))
+      ) {
+        continue;
+      }
       try {
         fs.unlinkSync(path.join(os.tmpdir(), name));
       } catch {}
@@ -139,7 +145,9 @@ async function downloadSubtitleFile(url, destPath) {
       const source = decodeURIComponent(parsedUrl.pathname);
       const tmpRoot = os.tmpdir();
       const inTmp = isWithinAny([tmpRoot], source);
-      const looksLikeOurs = path.basename(source).startsWith("streambert_sub_");
+      const base = path.basename(source);
+      const looksLikeOurs =
+        base.startsWith("sixfaced_sub_") || base.startsWith("streambert_sub_");
       if (!inTmp || !looksLikeOurs) return false;
       fs.copyFileSync(source, destPath);
       return true;
@@ -335,7 +343,7 @@ function register(getMainWindow) {
         try {
           fs.writeFileSync(
             logPath,
-            `Streambert Download Log\nName: ${name}\nURL: ${m3u8Url}\nStarted: ${new Date().toISOString()}\n${"─".repeat(60)}\n`,
+            `Sixfaced Download Log\nName: ${name}\nURL: ${m3u8Url}\nStarted: ${new Date().toISOString()}\n${"─".repeat(60)}\n`,
             "utf8",
           );
         } catch {}

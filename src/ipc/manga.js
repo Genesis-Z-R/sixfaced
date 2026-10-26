@@ -1,4 +1,4 @@
-// ── IPC: MangaPill Unified Manga Provider for Streambert ────────────────────
+// ── IPC: MangaPill Unified Manga Provider for Sixfaced ────────────────────
 // Serves discovery/popular manga, direct search, rich metadata, complete chapter
 // directories, and high-speed Backblaze B2 CDN pages from MangaPill.
 
