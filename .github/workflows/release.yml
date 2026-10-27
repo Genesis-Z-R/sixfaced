@@ -1,0 +1,106 @@
+name: Release
+
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag
+        required: true
+        default: v1.0.0
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  macos:
+    name: macOS (universal DMG)
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build renderer
+        run: npx cross-env ELECTRON_DIST=1 vite build
+
+      - name: Package app bundle
+        run: npx electron-builder --mac --universal --dir --publish never
+
+      - name: Ad-hoc sign
+        run: |
+          codesign --force --deep --sign - "dist/mac-universal/Sixfaced.app"
+          codesign --verify --deep --strict "dist/mac-universal/Sixfaced.app"
+
+      - name: Create DMG
+        run: |
+          mkdir -p release/dmg
+          cp -R "dist/mac-universal/Sixfaced.app" release/dmg/
+          ln -s /Applications release/dmg/Applications
+          VERSION=$(node -p "require('./package.json').version")
+          hdiutil create -volname "Sixfaced" -srcfolder release/dmg \
+            -ov -format UDZO "release/Sixfaced-${VERSION}-universal.dmg"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sixfaced-macos
+          path: release/*.dmg
+          if-no-files-found: error
+
+  windows:
+    name: Windows (NSIS installer)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Build Windows installer
+        run: npm run dist:win
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: sixfaced-windows
+          path: dist/*.exe
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    needs: [macos, windows]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: sixfaced-*
+          path: artifacts
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -lh artifacts
+
+      - name: Create release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: Sixfaced ${{ github.event.inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          body: |
+            Sixfaced **${{ github.event.inputs.tag || github.ref_name }}** — macOS (universal) and Windows (x64) builds.
+
+            - macOS: open the `.dmg`, drag Sixfaced to Applications. The build is **ad-hoc signed, not notarised** — first launch may need right-click → Open.
+            - Windows: run the `Setup` `.exe`. The build is **unsigned**, so SmartScreen may warn.
+
+            Linux packages can be built locally with `npm run dist:linux`.
+          files: artifacts/**
