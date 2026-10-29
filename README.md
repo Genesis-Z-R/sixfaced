@@ -48,7 +48,7 @@ Sixfaced has no backend of its own. The TMDB token is stored with the OS keychai
 **To run a release build**
 
 - A free TMDB API Read Access Token — see [tmdb-tutorial.md](tmdb-tutorial.md).
-- No manual downloader setup: on the first download the app uses `yt-dlp`/`ffmpeg` from your `PATH` if present, otherwise it fetches pinned, checksum-verified builds into its profile (about 60 MB, once).
+- No manual downloader setup: on the first download the app uses `yt-dlp`/`ffmpeg` from your `PATH` if present, otherwise it fetches pinned, checksum-verified builds into its profile (about 80 MB, once).
 
 **To build from source**
 
@@ -151,7 +151,7 @@ Nothing is downloaded or installed automatically — the check is read-only unti
 | Windows | `%APPDATA%\Sixfaced` |
 | Linux | `~/.config/Sixfaced` |
 
-The profile also contains a `bin/` folder with the managed downloader tools (~60 MB) once they have been fetched.
+The profile also contains a `bin/` folder with the managed downloader tools (~80 MB) once they have been fetched.
 
 - **Backups:** Settings → Backup exports/imports a JSON file and can schedule automatic backups to `~/Documents/Sixfaced/`.
 - **Upgrading from Streambert:** on first launch Sixfaced copies the old `streambert` profile (library, history, progress, downloads) into the new folder. The macOS keychain entry is app-scoped, so the TMDB token has to be entered once after the rename.
