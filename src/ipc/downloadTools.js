@@ -20,9 +20,10 @@ const ytDlpAsset = (file, sha256) => ({
   sha256,
 });
 
-const ffmpegAsset = (file, sha256) => ({
+const ffmpegAsset = (file, sha256, sha256Binary) => ({
   url: `https://github.com/eugeneware/ffmpeg-static/releases/download/${FFMPEG_VERSION}/${file}.gz`,
   sha256,
+  sha256Binary,
   gzip: true,
 });
 
@@ -41,10 +42,10 @@ const TOOLS = {
   ffmpeg: {
     version: FFMPEG_VERSION,
     assets: {
-      "darwin-arm64": ffmpegAsset("ffmpeg-darwin-arm64", "8923876afa8db5585022d7860ec7e589af192f441c56793971276d450ed3bbfa"),
-      "darwin-x64": ffmpegAsset("ffmpeg-darwin-x64", "929b375c1182d956c51f7ac25e0b2b0411fb01f6f407aa15c9758efeb4242106"),
-      "win32-x64": ffmpegAsset("ffmpeg-win32-x64", "8883a3dffbd0a16cf4ef95206ea05283f78908dbfb118f73c83f4951dcc06d77"),
-      "linux-x64": ffmpegAsset("ffmpeg-linux-x64", "bfe8a8fc511530457b528c48d77b5737527b504a3797a9bc4866aeca69c2dffa"),
+      "darwin-arm64": ffmpegAsset("ffmpeg-darwin-arm64", "8923876afa8db5585022d7860ec7e589af192f441c56793971276d450ed3bbfa", "a90e3db6a3fd35f6074b013f948b1aa45b31c6375489d39e572bea3f18336584"),
+      "darwin-x64": ffmpegAsset("ffmpeg-darwin-x64", "929b375c1182d956c51f7ac25e0b2b0411fb01f6f407aa15c9758efeb4242106", "ebdddc936f61e14049a2d4b549a412b8a40deeff6540e58a9f2a2da9e6b18894"),
+      "win32-x64": ffmpegAsset("ffmpeg-win32-x64", "8883a3dffbd0a16cf4ef95206ea05283f78908dbfb118f73c83f4951dcc06d77", "04e1307997530f9cf2fe35cba2ca7e8875ca91da02f89d6c7243df819c94ad00"),
+      "linux-x64": ffmpegAsset("ffmpeg-linux-x64", "bfe8a8fc511530457b528c48d77b5737527b504a3797a9bc4866aeca69c2dffa", "e7e7fb30477f717e6f55f9180a70386c62677ef8a4d4d1a5d948f4098aa3eb99"),
     },
     binary: { darwin: "ffmpeg", win32: "ffmpeg.exe", linux: "ffmpeg" },
   },
@@ -52,6 +53,15 @@ const TOOLS = {
 
 let _cache = null;
 let _inflight = null;
+const _progressListeners = new Set();
+
+function emitProgress(progress) {
+  for (const listener of _progressListeners) {
+    try {
+      listener(progress);
+    } catch {}
+  }
+}
 
 function platformKey() {
   return `${process.platform}-${process.arch}`;
@@ -185,7 +195,7 @@ async function ensureTool(name, onProgress) {
   const dest = path.join(dir, spec.binary[process.platform] || spec.binary.linux);
   if (isExecutable(dest)) {
     const digest = await sha256File(dest);
-    if (digest === asset.sha256) {
+    if (digest === (asset.sha256Binary || asset.sha256)) {
       return { path: dest, source: "managed", version: spec.version };
     }
   }
@@ -205,6 +215,13 @@ async function ensureTool(name, onProgress) {
   let data = buffer;
   if (asset.gzip) data = zlib.gunzipSync(buffer);
 
+  if (asset.sha256Binary) {
+    const binaryDigest = crypto.createHash("sha256").update(data).digest("hex");
+    if (binaryDigest !== asset.sha256Binary) {
+      throw new Error(`${name} binary failed checksum verification`);
+    }
+  }
+
   const tmp = `${dest}.part`;
   fs.writeFileSync(tmp, data, { mode: 0o755 });
   fs.renameSync(tmp, dest);
@@ -219,12 +236,20 @@ async function ensureTool(name, onProgress) {
  * Always verifies managed binaries against the pinned checksum.
  */
 function ensureTools(onProgress) {
-  if (_cache) return Promise.resolve(_cache);
-  if (_inflight) return _inflight;
+  if (onProgress) _progressListeners.add(onProgress);
+  const release = () => {
+    if (onProgress) _progressListeners.delete(onProgress);
+  };
+
+  if (_cache) {
+    release();
+    return Promise.resolve(_cache);
+  }
+  if (_inflight) return _inflight.finally(release);
 
   _inflight = (async () => {
-    const ytDlp = await ensureTool("ytDlp", onProgress);
-    const ffmpeg = await ensureTool("ffmpeg", onProgress);
+    const ytDlp = await ensureTool("ytDlp", emitProgress);
+    const ffmpeg = await ensureTool("ffmpeg", emitProgress);
     _cache = {
       ytDlp: ytDlp.path,
       ffmpeg: ffmpeg.path,
@@ -237,6 +262,7 @@ function ensureTools(onProgress) {
 
   return _inflight.finally(() => {
     _inflight = null;
+    release();
   });
 }
 

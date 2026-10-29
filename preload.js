@@ -29,6 +29,8 @@ contextBridge.exposeInMainWorld("electron", {
   // Download actions
   checkDownloader: (folder) => ipcRenderer.invoke("check-downloader", folder),
   runDownload: (args) => ipcRenderer.invoke("run-download", args),
+  cancelDownload: (id) => ipcRenderer.invoke("cancel-download", id),
+  retryDownload: (id) => ipcRenderer.invoke("retry-download", id),
   getDownloads: () => ipcRenderer.invoke("get-downloads"),
   deleteDownload: (args) => ipcRenderer.invoke("delete-download", args),
   showInFolder: (path) => ipcRenderer.invoke("show-in-folder", path),

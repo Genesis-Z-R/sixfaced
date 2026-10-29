@@ -13,18 +13,26 @@ import SubtitleDownloaderModal from "../components/SubtitleDownloaderModal";
 import { imgUrl } from "../utils/api";
 
 const STATUS_CLASS = {
+  queued: "dl-status--downloading",
   downloading: "dl-status--downloading",
+  processing: "dl-status--downloading",
   completed: "dl-status--completed",
   error: "dl-status--error",
+  canceled: "dl-status--interrupted",
   interrupted: "dl-status--interrupted",
 };
 
 const STATUS_LABEL = {
+  queued: "Queued",
   downloading: "Downloading",
+  processing: "Processing",
   completed: "Completed",
   error: "Error",
+  canceled: "Canceled",
   interrupted: "Interrupted",
 };
+
+const ACTIVE_STATUSES = new Set(["queued", "downloading", "processing"]);
 
 function timeAgo(ts) {
   if (!ts) return "";
@@ -158,14 +166,14 @@ export default function DownloadsPage({
 
   // ── Stable derived lists ──────────────────────────────────────
   const active = useMemo(
-    () => downloads.filter((d) => d.status === "downloading"),
+    () => downloads.filter((d) => ACTIVE_STATUSES.has(d.status)),
     [downloads],
   );
 
   const finished = useMemo(
     () =>
       downloads
-        .filter((d) => d.status !== "downloading")
+        .filter((d) => !ACTIVE_STATUSES.has(d.status))
         .sort((a, b) => (b.completedAt || 0) - (a.completedAt || 0)),
     [downloads],
   );
@@ -316,6 +324,34 @@ export default function DownloadsPage({
       setScanning(false);
     }
   }, [scanFolder, downloads, finished, onUpdateDownload]);
+
+  const handleCancel = useCallback(
+    async (dl) => {
+      const res = await window.electron.cancelDownload(dl.id);
+      if (res?.ok) {
+        onUpdateDownload?.(dl.id, { lastMessage: "Canceling…" });
+      }
+    },
+    [onUpdateDownload],
+  );
+
+  const handleRetry = useCallback(
+    async (dl) => {
+      const res = await window.electron.retryDownload(dl.id);
+      if (res?.ok) {
+        onUpdateDownload?.(dl.id, {
+          status: "queued",
+          progress: 0,
+          size: "",
+          speed: "",
+          filePath: null,
+          lastMessage: "Queued",
+          completedAt: null,
+        });
+      }
+    },
+    [onUpdateDownload],
+  );
 
   const handleDelete = useCallback(
     async (dl) => {
@@ -499,6 +535,7 @@ export default function DownloadsPage({
               <ActiveCard
                 key={dl.id}
                 dl={dl}
+                onCancel={() => handleCancel(dl)}
                 onDelete={() => handleDelete(dl)}
                 onSelect={
                   dl.tmdbId && dl.mediaType
@@ -592,6 +629,7 @@ export default function DownloadsPage({
                     window.electron?.showInFolder(dl.filePath)
                   }
                   onDelete={dl.isLocalOnly ? undefined : () => handleDelete(dl)}
+                  onRetry={dl.isLocalOnly ? undefined : () => handleRetry(dl)}
                   isHighlighted={isHighlighted}
                   highlightRef={isHighlighted ? highlightRef : null}
                   watchedKey={watchedKey}
@@ -659,8 +697,9 @@ export default function DownloadsPage({
 }
 
 // ── Active download card ───────────────────────────────────────────────────────
-const ActiveCard = memo(function ActiveCard({ dl, onDelete, onSelect }) {
+const ActiveCard = memo(function ActiveCard({ dl, onDelete, onCancel, onSelect }) {
   const pct = dl.progress || 0;
+  const queued = dl.status === "queued";
   return (
     <div className="dl-card dl-card-active">
       <div className="dl-card__header">
@@ -714,7 +753,14 @@ const ActiveCard = memo(function ActiveCard({ dl, onDelete, onSelect }) {
           </div>
         </div>
         <div className="dl-card__right">
-          <div className="dl-card__pct">{pct.toFixed(1)}%</div>
+          <div className="dl-card__pct">
+            {queued ? "Queued" : `${pct.toFixed(1)}%`}
+          </div>
+          {onCancel && (
+            <button className="icon-btn" onClick={onCancel} title="Cancel">
+              ✕
+            </button>
+          )}
           <button className="icon-btn" onClick={onDelete} title="Remove">
             <TrashIcon />
           </button>
@@ -769,6 +815,7 @@ const LocalFileCard = memo(function LocalFileCard({
   onHistory,
   onOpenSubtitleDownloader,
   onOpenLog,
+  onRetry,
 }) {
   const isDownload = !dl.isLocalOnly;
   const canWatch = !!fileExists && !!dl.filePath;
@@ -1332,6 +1379,17 @@ const LocalFileCard = memo(function LocalFileCard({
               <TrashIcon />
             </button>
           )}
+          {onRetry &&
+            isDownload &&
+            ["error", "interrupted", "canceled"].includes(dl.status) && (
+              <button
+                className="btn btn-ghost dl-btn--sm"
+                onClick={onRetry}
+                title="Retry download"
+              >
+                ⟳ Retry
+              </button>
+            )}
           {onOpenLog && dl.logPath && dl.status === "error" && (
             <button
               className="btn btn-ghost dl-btn--sm"

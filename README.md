@@ -18,7 +18,7 @@ A cross-platform Electron desktop app to stream and download movies, TV series a
 - **Anime** — AllManga sources with AniList metadata, dub/sub selection, and intro/outro skip timings.
 - **Manga & Manhwa** — search, bookmarks and a full-screen reader with vertical webtoon and paginated modes, plus exact page-level resume.
 - **Updates** — a tab in Manga, Manhwa, Series and Anime that compares every bookmarked title's current chapter/episode with the latest release, so you can see what you are behind on before opening anything.
-- **Downloads** — yt-dlp/ffmpeg managed by the app, concurrent fragments, resumable parts, verified remuxes and in-app playback.
+- **Downloads** — yt-dlp/ffmpeg managed by the app, a two-slot download queue, concurrent fragments, resumable parts, verified remuxes and in-app playback.
 - **Subtitles** — search, download and attach subtitles (SubDL / Wyzie).
 - **Library** — history, bookmarks, progress, resume playback and scheduled backups.
 - **Interface** — themes and accent colours, custom home layout, gamepad navigation, keyboard shortcuts.
@@ -100,7 +100,7 @@ Downloads need no setup. The first time you download something, Sixfaced resolve
 2. Otherwise pinned builds are fetched once into `<profile>/bin`, verified against hard-coded SHA-256 hashes, and made executable. Nothing runs before verification.
 3. The destination defaults to `~/Downloads/Sixfaced`; you can change it in the download dialog.
 
-Transfers run through yt-dlp with eight concurrent fragments, resumable `.part` files and the app's Referer/User-Agent headers; ffmpeg remuxes to MP4 without re-encoding. Progress, speed and the final path are reported back to the UI.
+Transfers run through yt-dlp with eight concurrent fragments, resumable `.part` files and the app's Referer/User-Agent headers; ffmpeg remuxes to MP4 without re-encoding. Up to two downloads run at once and the rest wait in a persisted queue — queued, interrupted and failed items survive a restart and can be retried without re-downloading completed fragments. Progress, speed, ETA and the final path are reported back to the UI.
 
 ---
 

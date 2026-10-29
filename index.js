@@ -639,7 +639,12 @@ function createWindow() {
   mainWindow.on("close", (e) => {
     const running = downloadsIpc
       .getDownloads()
-      .filter((d) => d.status === "downloading");
+      .filter(
+        (d) =>
+          d.status === "downloading" ||
+          d.status === "queued" ||
+          d.status === "processing",
+      );
     if (running.length === 0) return;
     e.preventDefault();
     if (closeResponsePending) return;
@@ -672,6 +677,7 @@ blockStats.init(getMainWindow);
 ipcMain.on("close-response", (_, confirmed) => {
   closeResponsePending = false;
   if (confirmed && mainWindow && !mainWindow.isDestroyed()) {
+    downloadsIpc.interruptActiveForQuit();
     downloadsIpc.killAllDownloads();
     mainWindow.destroy();
   }
@@ -884,6 +890,11 @@ if (!gotTheLock) {
   app.on("window-all-closed", () => app.quit());
   app.on("before-quit", () => {
     blockStats.flush();
+    // Do not leave yt-dlp children running when the app exits.
+    try {
+      downloadsIpc.interruptActiveForQuit();
+      downloadsIpc.killAllDownloads();
+    } catch {}
   });
   app.on("activate", () => {
     if (mainWindow === null) createWindow();
