@@ -37,6 +37,7 @@ contextBridge.exposeInMainWorld("electron", {
 
   // Misc
   pickFolder: () => ipcRenderer.invoke("pick-folder"),
+  getDefaultDownloadPath: () => ipcRenderer.invoke("get-default-download-path"),
   openExternal: (url) => ipcRenderer.invoke("open-external", url),
   openPath: (filePath) => ipcRenderer.invoke("open-path", filePath),
   getInstallPath: () => ipcRenderer.invoke("get-install-path"),

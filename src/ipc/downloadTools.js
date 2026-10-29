@@ -1,0 +1,255 @@
+// ── Managed download tools ───────────────────────────────────────────────────
+// yt-dlp does the transfer (HLS, concurrent fragments, resumable parts) and
+// ffmpeg remuxes. We prefer tools already installed on the system and only
+// download pinned, checksum-verified binaries when they are missing.
+
+const { app } = require("electron");
+const fs = require("fs");
+const path = require("path");
+const https = require("https");
+const zlib = require("zlib");
+const crypto = require("crypto");
+const { spawnSync } = require("child_process");
+
+const YTDLP_VERSION = "2026.10.26";
+const FFMPEG_VERSION = "b6.1.1";
+const MAX_REDIRECTS = 5;
+
+const ytDlpAsset = (file, sha256) => ({
+  url: `https://github.com/yt-dlp/yt-dlp/releases/download/${YTDLP_VERSION}/${file}`,
+  sha256,
+});
+
+const ffmpegAsset = (file, sha256) => ({
+  url: `https://github.com/eugeneware/ffmpeg-static/releases/download/${FFMPEG_VERSION}/${file}.gz`,
+  sha256,
+  gzip: true,
+});
+
+const TOOLS = {
+  ytDlp: {
+    version: YTDLP_VERSION,
+    assets: {
+      // yt-dlp_macos is a universal2 build
+      "darwin-arm64": ytDlpAsset("yt-dlp_macos", "0f922c15ccc0b83eefa1c8bc9104e434318c4bf16e408e1ee93b7745a6efe0aa"),
+      "darwin-x64": ytDlpAsset("yt-dlp_macos", "0f922c15ccc0b83eefa1c8bc9104e434318c4bf16e408e1ee93b7745a6efe0aa"),
+      "win32-x64": ytDlpAsset("yt-dlp.exe", "f5389d3698ecde4ef06f4e6b1ce0294fe9ac1396228c8990b8d3416d6d177a7d"),
+      "linux-x64": ytDlpAsset("yt-dlp_linux", "767ba9dce7052aa196f8b12652f433d76de128ba168966fa84b6394d5e6c6795"),
+    },
+    binary: { darwin: "yt-dlp", win32: "yt-dlp.exe", linux: "yt-dlp" },
+  },
+  ffmpeg: {
+    version: FFMPEG_VERSION,
+    assets: {
+      "darwin-arm64": ffmpegAsset("ffmpeg-darwin-arm64", "8923876afa8db5585022d7860ec7e589af192f441c56793971276d450ed3bbfa"),
+      "darwin-x64": ffmpegAsset("ffmpeg-darwin-x64", "929b375c1182d956c51f7ac25e0b2b0411fb01f6f407aa15c9758efeb4242106"),
+      "win32-x64": ffmpegAsset("ffmpeg-win32-x64", "8883a3dffbd0a16cf4ef95206ea05283f78908dbfb118f73c83f4951dcc06d77"),
+      "linux-x64": ffmpegAsset("ffmpeg-linux-x64", "bfe8a8fc511530457b528c48d77b5737527b504a3797a9bc4866aeca69c2dffa"),
+    },
+    binary: { darwin: "ffmpeg", win32: "ffmpeg.exe", linux: "ffmpeg" },
+  },
+};
+
+let _cache = null;
+let _inflight = null;
+
+function platformKey() {
+  return `${process.platform}-${process.arch}`;
+}
+
+function binDir() {
+  const dir = path.join(app.getPath("userData"), "bin");
+  fs.mkdirSync(dir, { recursive: true });
+  return dir;
+}
+
+function isExecutable(file) {
+  try {
+    const stat = fs.statSync(file);
+    if (!stat.isFile()) return false;
+    if (process.platform === "win32") return true;
+    fs.accessSync(file, fs.constants.X_OK);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function which(name) {
+  try {
+    const cmd = process.platform === "win32" ? "where" : "which";
+    const result = spawnSync(cmd, [name], { encoding: "utf8" });
+    if (result.status === 0) {
+      const first = String(result.stdout || "").trim().split(/\r?\n/)[0];
+      if (first && isExecutable(first)) return first;
+    }
+  } catch {}
+  return null;
+}
+
+function systemTool(name) {
+  const fromPath = which(name);
+  if (fromPath) return fromPath;
+  const candidates =
+    process.platform === "darwin"
+      ? [`/opt/homebrew/bin/${name}`, `/usr/local/bin/${name}`]
+      : process.platform === "linux"
+        ? [`/usr/bin/${name}`, `/usr/local/bin/${name}`]
+        : [];
+  for (const candidate of candidates) {
+    if (isExecutable(candidate)) return candidate;
+  }
+  return null;
+}
+
+function sha256File(file) {
+  return new Promise((resolve, reject) => {
+    const hash = crypto.createHash("sha256");
+    const stream = fs.createReadStream(file);
+    stream.on("data", (chunk) => hash.update(chunk));
+    stream.on("error", reject);
+    stream.on("end", () => resolve(hash.digest("hex")));
+  });
+}
+
+function download(url, onProgress) {
+  return new Promise((resolve, reject) => {
+    let redirects = 0;
+    const request = (target) => {
+      let parsed;
+      try {
+        parsed = new URL(target);
+      } catch {
+        reject(new Error("Invalid download URL"));
+        return;
+      }
+      if (parsed.protocol !== "https:") {
+        reject(new Error("Downloads must use HTTPS"));
+        return;
+      }
+      https
+        .get(
+          target,
+          { headers: { "User-Agent": "Sixfaced/1.0", Accept: "application/octet-stream" } },
+          (res) => {
+            if (
+              res.statusCode >= 300 &&
+              res.statusCode < 400 &&
+              res.headers.location &&
+              redirects < MAX_REDIRECTS
+            ) {
+              redirects += 1;
+              res.resume();
+              request(new URL(res.headers.location, target).toString());
+              return;
+            }
+            if (res.statusCode !== 200) {
+              res.resume();
+              reject(new Error(`Download failed (HTTP ${res.statusCode})`));
+              return;
+            }
+            const total = Number(res.headers["content-length"] || 0);
+            const chunks = [];
+            let received = 0;
+            res.on("data", (chunk) => {
+              received += chunk.length;
+              chunks.push(chunk);
+              onProgress?.({ received, total });
+            });
+            res.on("end", () => resolve({ buffer: Buffer.concat(chunks), total }));
+            res.on("error", reject);
+          },
+        )
+        .on("error", reject);
+    };
+    request(url);
+  });
+}
+
+async function ensureTool(name, onProgress) {
+  const spec = TOOLS[name];
+  const key = platformKey();
+  const asset = spec.assets[key];
+  if (!asset) {
+    throw new Error(`No ${name} build for ${key}`);
+  }
+
+  // 1. A working system installation is preferred.
+  const system = systemTool(name === "ytDlp" ? (process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp") : (process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg"));
+  if (system) {
+    return { path: system, source: "system", version: "system" };
+  }
+
+  // 2. A previously downloaded, intact copy.
+  const dir = binDir();
+  const dest = path.join(dir, spec.binary[process.platform] || spec.binary.linux);
+  if (isExecutable(dest)) {
+    const digest = await sha256File(dest);
+    if (digest === asset.sha256) {
+      return { path: dest, source: "managed", version: spec.version };
+    }
+  }
+
+  // 3. Fetch the pinned binary.
+  onProgress?.({ tool: name, phase: "downloading", received: 0, total: 0 });
+  const { buffer } = await download(asset.url, (p) =>
+    onProgress?.({ tool: name, phase: "downloading", ...p }),
+  );
+  onProgress?.({ tool: name, phase: "verifying", received: 0, total: 0 });
+
+  const digest = crypto.createHash("sha256").update(buffer).digest("hex");
+  if (digest !== asset.sha256) {
+    throw new Error(`${name} download failed checksum verification`);
+  }
+
+  let data = buffer;
+  if (asset.gzip) data = zlib.gunzipSync(buffer);
+
+  const tmp = `${dest}.part`;
+  fs.writeFileSync(tmp, data, { mode: 0o755 });
+  fs.renameSync(tmp, dest);
+  if (process.platform !== "win32") fs.chmodSync(dest, 0o755);
+
+  onProgress?.({ tool: name, phase: "ready", received: 0, total: 0 });
+  return { path: dest, source: "managed", version: spec.version };
+}
+
+/**
+ * Ensures both tools exist. Returns `{ ytDlp, ffmpeg, ffmpegDir }`.
+ * Always verifies managed binaries against the pinned checksum.
+ */
+function ensureTools(onProgress) {
+  if (_cache) return Promise.resolve(_cache);
+  if (_inflight) return _inflight;
+
+  _inflight = (async () => {
+    const ytDlp = await ensureTool("ytDlp", onProgress);
+    const ffmpeg = await ensureTool("ffmpeg", onProgress);
+    _cache = {
+      ytDlp: ytDlp.path,
+      ffmpeg: ffmpeg.path,
+      ffmpegDir: path.dirname(ffmpeg.path),
+      source: ytDlp.source === "system" && ffmpeg.source === "system" ? "system" : "managed",
+      versions: { ytDlp: ytDlp.version, ffmpeg: ffmpeg.version },
+    };
+    return _cache;
+  })();
+
+  return _inflight.finally(() => {
+    _inflight = null;
+  });
+}
+
+/** Non-destructive status check for the Settings screen / first launch. */
+function toolsStatus() {
+  const key = platformKey();
+  return {
+    platform: key,
+    supported: Boolean(TOOLS.ytDlp.assets[key] && TOOLS.ffmpeg.assets[key]),
+    ytDlp: systemTool(process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp") || null,
+    ffmpeg: systemTool(process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg") || null,
+    managedVersion: { ytDlp: YTDLP_VERSION, ffmpeg: FFMPEG_VERSION },
+  };
+}
+
+module.exports = { ensureTools, toolsStatus, TOOLS };

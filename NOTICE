@@ -25,3 +25,9 @@ GNU General Public License for more details.
 
 You should have received a copy of the GNU General Public License
 along with this program.  If not, see <https://www.gnu.org/licenses/>.
+
+Third-party tools fetched at runtime (not bundled with this repository):
+  - yt-dlp — Unlicense — https://github.com/yt-dlp/yt-dlp
+  - FFmpeg, via ffmpeg-static builds — GPL/LGPL — https://ffmpeg.org
+Downloaded binaries are pinned to a specific version and verified against a
+hard-coded SHA-256 checksum before they are executed.

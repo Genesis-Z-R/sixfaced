@@ -18,7 +18,7 @@ A cross-platform Electron desktop app to stream and download movies, TV series a
 - **Anime** — AllManga sources with AniList metadata, dub/sub selection, and intro/outro skip timings.
 - **Manga & Manhwa** — search, bookmarks and a full-screen reader with vertical webtoon and paginated modes, plus exact page-level resume.
 - **Updates** — a tab in Manga, Manhwa, Series and Anime that compares every bookmarked title's current chapter/episode with the latest release, so you can see what you are behind on before opening anything.
-- **Downloads** — multi-threaded downloads, resume support, and in-app playback of downloaded files.
+- **Downloads** — yt-dlp/ffmpeg managed by the app, concurrent fragments, resumable parts, verified remuxes and in-app playback.
 - **Subtitles** — search, download and attach subtitles (SubDL / Wyzie).
 - **Library** — history, bookmarks, progress, resume playback and scheduled backups.
 - **Interface** — themes and accent colours, custom home layout, gamepad navigation, keyboard shortcuts.
@@ -48,8 +48,7 @@ Sixfaced has no backend of its own. The TMDB token is stored with the OS keychai
 **To run a release build**
 
 - A free TMDB API Read Access Token — see [tmdb-tutorial.md](tmdb-tutorial.md).
-- For downloads: the [vid-dl CLI](https://github.com/truelockmc/vid-dl-cli-only/releases/latest) somewhere on your machine and [ffmpeg](https://ffmpeg.org/download.html) on your `PATH`.
-- Optional: `yt-dlp` for YouTube-hosted anime sources.
+- No manual downloader setup: on the first download the app uses `yt-dlp`/`ffmpeg` from your `PATH` if present, otherwise it fetches pinned, checksum-verified builds into its profile (about 60 MB, once).
 
 **To build from source**
 
@@ -90,6 +89,18 @@ chmod +x Sixfaced-*.AppImage && ./Sixfaced-*.AppImage
 ```
 
 > On Arch, `libxcrypt-compat` may be required: `sudo pacman -S libxcrypt-compat`.
+
+---
+
+## Downloads
+
+Downloads need no setup. The first time you download something, Sixfaced resolves a downloader:
+
+1. If `yt-dlp` and `ffmpeg` are already on `PATH` (or in the usual Homebrew locations), they are used as-is.
+2. Otherwise pinned builds are fetched once into `<profile>/bin`, verified against hard-coded SHA-256 hashes, and made executable. Nothing runs before verification.
+3. The destination defaults to `~/Downloads/Sixfaced`; you can change it in the download dialog.
+
+Transfers run through yt-dlp with eight concurrent fragments, resumable `.part` files and the app's Referer/User-Agent headers; ffmpeg remuxes to MP4 without re-encoding. Progress, speed and the final path are reported back to the UI.
 
 ---
 
@@ -140,6 +151,8 @@ Nothing is downloaded or installed automatically — the check is read-only unti
 | Windows | `%APPDATA%\Sixfaced` |
 | Linux | `~/.config/Sixfaced` |
 
+The profile also contains a `bin/` folder with the managed downloader tools (~60 MB) once they have been fetched.
+
 - **Backups:** Settings → Backup exports/imports a JSON file and can schedule automatic backups to `~/Documents/Sixfaced/`.
 - **Upgrading from Streambert:** on first launch Sixfaced copies the old `streambert` profile (library, history, progress, downloads) into the new folder. The macOS keychain entry is app-scoped, so the TMDB token has to be entered once after the rename.
 
@@ -163,6 +176,7 @@ Nothing is downloaded or installed automatically — the check is read-only unti
 │   │   ├── manga.js            # MangaPill provider
 │   │   ├── manhwa.js           # Asura / ComicK provider
 │   │   ├── player.js           # playback, updater, window controls
+│   │   ├── downloadTools.js    # yt-dlp/ffmpeg resolution + provisioning
 │   │   ├── storage.js          # secure store + scheduled backups
 │   │   ├── subtitles.js        # subtitle search/download
 │   │   ├── fsSafe.js           # atomic JSON persistence

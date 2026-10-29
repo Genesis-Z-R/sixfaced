@@ -391,7 +391,13 @@ export default function DownloadModal({
     () => storage.get("downloadPath") || "",
   );
   const [settingPath, setSettingPath] = useState(false);
-  const [downloader, setDownloader] = useState(null);
+  // The downloader is managed by the main process (system tools or pinned
+  // binaries), so there is no binary folder to pick any more.
+  const [downloader, setDownloader] = useState({
+    exists: true,
+    token: "managed",
+    managed: true,
+  });
   const [checking, setChecking] = useState(false);
   const [downloadStatus, setDownloadStatus] = useState(null);
 
@@ -436,6 +442,24 @@ export default function DownloadModal({
       : "Linux_x64-portable";
   const releaseUrl =
     "https://github.com/truelockmc/vid-dl-cli-only/releases/latest";
+
+  // First run: default to ~/Downloads/Sixfaced instead of asking the user.
+  useEffect(() => {
+    if (!isElectron || downloadPath) return;
+    let mounted = true;
+    window.electron
+      ?.getDefaultDownloadPath?.()
+      .then((dir) => {
+        if (!mounted || !dir) return;
+        setDownloadPath(dir);
+        storage.set("downloadPath", dir);
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   useEffect(() => {
     if (!downloaderFolder || !isElectron) return;
@@ -514,7 +538,7 @@ export default function DownloadModal({
   };
 
   const handleDownload = async () => {
-    if (!downloader?.token || !downloadPath || !m3u8Url) return;
+    if (!downloadPath || !m3u8Url) return;
     setDownloadStatus("starting");
 
     let resolvedSubs = [...subtitles];

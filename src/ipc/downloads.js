@@ -12,6 +12,7 @@ const os = require("os");
 const { writeJsonAtomic, readJsonWithBackup, keepBackup } = require("./fsSafe");
 const { isWithinAny, downloadRoots } = require("./pathSafety");
 const { assertPublicHttpUrl } = require("./netGuard");
+const { ensureTools } = require("./downloadTools");
 
 const LOG_PREFIX = "sixfaced_dl_";
 const LEGACY_LOG_PREFIX = "streambert_dl_";
@@ -236,39 +237,20 @@ function register(getMainWindow) {
   _getMainWindow = getMainWindow;
 
   // ── downloader binary detection ──────────────────────────────────────────
-  ipcMain.handle("check-downloader", (_, folderPath) => {
-    if (!folderPath) return { exists: false, reason: "no_folder" };
-    let entries;
-    try {
-      entries = fs.readdirSync(folderPath);
-    } catch (e) {
-      const reason =
-        e.code === "EACCES" ? "folder_permission" : "folder_unreadable";
-      return { exists: false, reason };
-    }
-    if (!entries.includes("_internal")) {
-      return { exists: false, reason: "no_internal" };
-    }
-    const binary = entries.find((e) => {
-      if (e === "_internal" || e.startsWith(".")) return false;
-      try {
-        const stat = fs.statSync(path.join(folderPath, e));
-        if (!stat.isFile()) return false;
-        return process.platform === "win32"
-          ? e.endsWith(".exe")
-          : !!(stat.mode & 0o111);
-      } catch {
-        return false;
-      }
-    });
-    if (!binary) return { exists: false, reason: "no_executable" };
+  // The downloader is managed by the app now: system tools when present,
+  // otherwise pinned binaries fetched into userData/bin.
+  ipcMain.handle("check-downloader", () => ({
+    exists: true,
+    token: "managed",
+    managed: true,
+  }));
 
-    // Store the validated path in the Main process only and hand a token to
-    // the Renderer.  The Renderer passes the token back when starting a
-    // download; the real path is never exposed outside the Main process.
-    const token = crypto.randomUUID();
-    trustedBinaryPaths.set(token, path.join(folderPath, binary));
-    return { exists: true, token };
+  ipcMain.handle("get-default-download-path", () => {
+    const dir = path.join(app.getPath("downloads"), "Sixfaced");
+    try {
+      fs.mkdirSync(dir, { recursive: true });
+    } catch {}
+    return dir;
   });
 
   // ── start download ────────────────────────────────────────────────────────
@@ -291,11 +273,6 @@ function register(getMainWindow) {
       },
     ) => {
       try {
-        // Resolve the binary path from trusted registry.
-        const binaryPath = trustedBinaryPaths.get(token);
-        if (!binaryPath) {
-          return { ok: false, error: "Invalid or unknown downloader token" };
-        }
         // One active download per episode; a second request would orphan the
         // first child process and race on the same output path.
         const sameEpisodeActive = downloads.some(
@@ -361,27 +338,69 @@ function register(getMainWindow) {
           d.status !== "downloading";
         downloads = downloads.filter((d) => !isSameMedia(d));
 
-        const args = [
-          "--cli",
-          m3u8Url,
-          "-f",
-          "mp4 (with Audio)",
-          "-r",
-          "best",
-          "-b",
-          "320",
-          "-n",
-          name,
-          "-d",
-          downloadPath,
-        ];
+        const safeName =
+          (name || "download")
+            .replace(/[<>:"/\\|?*\x00-\x1f]/g, "")
+            .replace(/\s+/g, " ")
+            .trim() || "download";
+        let referer = "https://www.google.com/";
+        try {
+          referer = new URL(m3u8Url).origin + "/";
+        } catch {}
 
-        const proc = spawn(binaryPath, args, {
-          stdio: ["ignore", "pipe", "pipe"],
-        });
-        activeProcs.set(id, proc);
-        // The token is single-use; the renderer must ask for a new one.
-        trustedBinaryPaths.delete(token);
+        ensureTools((progress) => {
+          const i = downloads.findIndex((d) => d.id === id);
+          if (i === -1) return;
+          const pct =
+            progress.total > 0
+              ? ` ${Math.round((progress.received / progress.total) * 100)}%`
+              : "";
+          downloads[i].lastMessage = `Preparing downloader…${pct}`;
+          sendProgress({
+            id,
+            lastMessage: downloads[i].lastMessage,
+            status: "downloading",
+          });
+        })
+          .then((tools) => {
+            const args = [
+              "--no-playlist",
+              "--no-colors",
+              "--newline",
+              "--progress",
+              "--concurrent-fragments",
+              "8",
+              "--retries",
+              "10",
+              "--fragment-retries",
+              "10",
+              "--socket-timeout",
+              "20",
+              "--progress-template",
+              "download:%(progress._percent_str)s|%(progress._speed_str)s|%(progress._eta_str)s|%(progress.downloaded_bytes)s",
+              "--print",
+              "after_move:__SIXFACED_FILE__%(filepath)s",
+              "--ffmpeg-location",
+              tools.ffmpegDir,
+              "--merge-output-format",
+              "mp4",
+              "-f",
+              "bv*+ba/b",
+              "--add-header",
+              `Referer:${referer}`,
+              "--user-agent",
+              "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+              "-o",
+              path.join(downloadPath, `${safeName}.%(ext)s`),
+              m3u8Url,
+            ];
+
+            const proc = spawn(tools.ytDlp, args, {
+              stdio: ["ignore", "pipe", "pipe"],
+              env: { ...process.env, PYTHONUNBUFFERED: "1" },
+            });
+            activeProcs.set(id, proc);
+            trustedBinaryPaths.delete(token);
 
         const handleLine = (line) => {
           const trimmed = line.trim();
@@ -390,6 +409,43 @@ function register(getMainWindow) {
           if (idx === -1) return;
 
           const update = {};
+
+          // Managed yt-dlp progress line (custom template)
+          if (trimmed.startsWith("download:")) {
+            const [pctRaw, speedRaw, etaRaw] = trimmed.slice(9).split("|");
+            const pct = parseFloat(pctRaw);
+            const speed = (speedRaw || "").trim();
+            const eta = (etaRaw || "").trim();
+            if (Number.isFinite(pct)) {
+              update.progress = Math.min(99, Math.max(0, Math.round(pct)));
+            }
+            if (speed && speed !== "Unknown") update.speed = speed;
+            update.lastMessage = `Downloading…${
+              Number.isFinite(pct) ? ` ${pct.toFixed(1)}%` : ""
+            }${eta && eta !== "Unknown" ? ` · ETA ${eta}` : ""}`;
+            downloads[idx] = { ...downloads[idx], ...update };
+            sendProgress({ id, ...update, status: downloads[idx].status });
+            return;
+          }
+
+          // yt-dlp prints the final path after remuxing
+          if (trimmed.startsWith("__SIXFACED_FILE__")) {
+            const finalPath = trimmed
+              .slice("__SIXFACED_FILE__".length)
+              .trim();
+            if (finalPath) {
+              downloads[idx].filePath = finalPath;
+              downloads[idx].progress = 99;
+              downloads[idx].lastMessage = "Finalizing…";
+              sendProgress({
+                id,
+                filePath: finalPath,
+                progress: 99,
+                lastMessage: "Finalizing…",
+              });
+            }
+            return;
+          }
 
           // (frag N/total), source of truth for HLS progress
           const fragMatch = trimmed.match(/\(frag\s+(\d+)\/(\d+)\)/);
@@ -586,9 +642,9 @@ function register(getMainWindow) {
           if (idx === -1) return;
           const msg =
             err.code === "EACCES"
-              ? `Permission denied, binary is not executable: ${binaryPath}`
+              ? "Permission denied while launching the downloader"
               : err.code === "ENOENT"
-                ? `Binary not found: ${binaryPath}`
+                ? "The managed downloader binary is missing — try again to re-download it"
                 : `Failed to start downloader: ${err.message}`;
           downloads[idx].status = "error";
           downloads[idx].completedAt = Date.now();
@@ -611,6 +667,7 @@ function register(getMainWindow) {
           downloads[idx].completedAt = Date.now();
           if (code === 0) {
             downloads[idx].progress = 100;
+            downloads[idx].lastMessage = "Completed";
             // Success: delete log file, clear logPath
             downloads[idx].logPath = null;
             try {
@@ -781,6 +838,20 @@ function register(getMainWindow) {
           });
           saveDownloads();
         });
+          })
+          .catch((error) => {
+            const i = downloads.findIndex((d) => d.id === id);
+            if (i === -1) return;
+            downloads[i].status = "error";
+            downloads[i].completedAt = Date.now();
+            downloads[i].lastMessage = `Downloader setup failed: ${error.message}`;
+            sendProgress({
+              id,
+              status: "error",
+              lastMessage: downloads[i].lastMessage,
+            });
+            saveDownloads();
+          });
 
         return { ok: true, id };
       } catch (e) {
