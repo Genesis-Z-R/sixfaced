@@ -179,6 +179,43 @@ function setupSession(playerSession, trailerSession) {
     "*://*/*.vtt*",
     "*://*/*.vtt",
   ];
+  // Capture the exact headers the player used for the manifest. Tokenized
+  // CDNs reject a synthesized Referer, so this context is required for
+  // downloads to work at all.
+  const STREAM_URLS = [
+    "*://*/*.m3u8*",
+    "*://*/*.m3u8",
+    "*://*/*.mpd*",
+    "*://*/*.mpd",
+  ];
+  const { sanitizeHeaders } = require("./src/ipc/streamProbe");
+  playerSession.webRequest.onBeforeSendHeaders(
+    { urls: STREAM_URLS },
+    (details, callback) => {
+      const url = details.url || "";
+      if (url.includes(".m3u8") || url.includes(".mpd")) {
+        let pageUrl = null;
+        try {
+          if (details.webContentsId) {
+            pageUrl =
+              webContents.fromId(details.webContentsId)?.getURL() || null;
+          }
+        } catch {}
+        const mw = getMainWindow();
+        if (mw && !mw.isDestroyed()) {
+          mw.webContents.send("stream-found", {
+            url,
+            headers: sanitizeHeaders(details.requestHeaders || {}),
+            pageUrl,
+            at: Date.now(),
+            kind: url.includes(".mpd") ? "dash" : "hls",
+          });
+        }
+      }
+      callback({ requestHeaders: details.requestHeaders });
+    },
+  );
+
   playerSession.webRequest.onBeforeRequest(
     { urls: [...BLOCKED_HOSTS, ...MEDIA_URLS] },
     (details, callback) => {
@@ -198,7 +235,7 @@ function setupSession(playerSession, trailerSession) {
       // Pass through + notify renderer
       const mw = getMainWindow();
       if (mw && !mw.isDestroyed()) {
-        if (url.includes(".m3u8")) {
+        if (url.includes(".m3u8") || url.includes(".mpd")) {
           mw.webContents.send("m3u8-found", url);
         } else if (url.includes(".vtt")) {
           const { extractSubtitleLang } = require("./src/ipc/subtitles");

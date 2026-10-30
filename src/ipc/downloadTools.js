@@ -39,6 +39,16 @@ const TOOLS = {
     },
     binary: { darwin: "yt-dlp", win32: "yt-dlp.exe", linux: "yt-dlp" },
   },
+  ffprobe: {
+    version: FFMPEG_VERSION,
+    assets: {
+      "darwin-arm64": ffmpegAsset("ffprobe-darwin-arm64", "d986a8ec7b030899fe66a8a288ed809a3543338705a3ce178cfb85869c5d80be", "bb2db6f5d8cef919da12fbf592119a987202a8c060a886f3cab091f9cab90b64"),
+      "darwin-x64": ffmpegAsset("ffprobe-darwin-x64", "d4da574d6e2e197bd259b47d69cf262df9e312af24ad960444f6d806d3d4c186", "fa3add0ce901f7241abe0dfc0155d958fc834aca3f8ce61f87cc712ae669c1e0"),
+      "win32-x64": ffmpegAsset("ffprobe-win32-x64", "f309e6223ad89d2fe54bccd420a7709b66fd27540674e92309578ed491a43c8d", "3a7e2dc003dc2cd1472827e4c7c4f056ae1ae0ae7c5bbc580c99b49827351ba4"),
+      "linux-x64": ffmpegAsset("ffprobe-linux-x64", "25d9b6ccb05e3d9de9e04e31e2506d8dd7f9f0418981965ac6df12e8d3afd067", "4f231a1960d83e403d08f7971e271707bec278a9ae18e21b8b5b03186668450d"),
+    },
+    binary: { darwin: "ffprobe", win32: "ffprobe.exe", linux: "ffprobe" },
+  },
   ffmpeg: {
     version: FFMPEG_VERSION,
     assets: {
@@ -250,10 +260,17 @@ function ensureTools(onProgress) {
   _inflight = (async () => {
     const ytDlp = await ensureTool("ytDlp", emitProgress);
     const ffmpeg = await ensureTool("ffmpeg", emitProgress);
+    // ffprobe is optional: downloads work without it, but metadata warnings
+    // and format checks are cleaner when it is present.
+    let ffprobe = null;
+    try {
+      ffprobe = await ensureTool("ffprobe", emitProgress);
+    } catch {}
     _cache = {
       ytDlp: ytDlp.path,
       ffmpeg: ffmpeg.path,
       ffmpegDir: path.dirname(ffmpeg.path),
+      ffprobe: ffprobe ? ffprobe.path : null,
       source: ytDlp.source === "system" && ffmpeg.source === "system" ? "system" : "managed",
       versions: { ytDlp: ytDlp.version, ffmpeg: ffmpeg.version },
     };

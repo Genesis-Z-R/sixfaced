@@ -48,7 +48,7 @@ Sixfaced has no backend of its own. The TMDB token is stored with the OS keychai
 **To run a release build**
 
 - A free TMDB API Read Access Token — see [tmdb-tutorial.md](tmdb-tutorial.md).
-- No manual downloader setup: on the first download the app uses `yt-dlp`/`ffmpeg` from your `PATH` if present, otherwise it fetches pinned, checksum-verified builds into its profile (about 80 MB, once).
+- No manual downloader setup: on the first download the app uses `yt-dlp`/`ffmpeg` from your `PATH` if present, otherwise it fetches pinned, checksum-verified builds into its profile (about 120 MB, once).
 
 **To build from source**
 
@@ -100,7 +100,7 @@ Downloads need no setup. The first time you download something, Sixfaced resolve
 2. Otherwise pinned builds are fetched once into `<profile>/bin`, verified against hard-coded SHA-256 hashes, and made executable. Nothing runs before verification.
 3. The destination defaults to `~/Downloads/Sixfaced`; you can change it in the download dialog.
 
-Transfers run through yt-dlp with eight concurrent fragments, resumable `.part` files and the app's Referer/User-Agent headers; ffmpeg remuxes to MP4 without re-encoding. Up to two downloads run at once and the rest wait in a persisted queue — queued, interrupted and failed items survive a restart and can be retried without re-downloading completed fragments. Progress, speed, ETA and the final path are reported back to the UI.
+When the player requests a manifest, Sixfaced captures the URL together with the `Referer`, `Origin`, `Cookie` and `User-Agent` the player used, then sends exactly those headers to yt-dlp — tokenized CDNs reject a synthesized Referer. The manifest is preflighted before queueing, so an expired or blocked link fails immediately with the HTTP status instead of starting a doomed download. Up to two downloads run at once and the rest wait in a persisted queue; queued, interrupted and failed items survive a restart and can be retried without re-downloading completed fragments. Transfers use eight concurrent fragments, resumable `.part` files and ffmpeg/ffprobe for remuxing and metadata. Failure logs are kept in the profile under `logs/downloads/`. Progress, speed, ETA and the final path are reported back to the UI.
 
 ---
 
@@ -151,7 +151,7 @@ Nothing is downloaded or installed automatically — the check is read-only unti
 | Windows | `%APPDATA%\Sixfaced` |
 | Linux | `~/.config/Sixfaced` |
 
-The profile also contains a `bin/` folder with the managed downloader tools (~80 MB) once they have been fetched.
+The profile also contains a `bin/` folder with the managed yt-dlp/ffmpeg/ffprobe tools (~120 MB) and a `logs/downloads/` folder with retained failure logs.
 
 - **Backups:** Settings → Backup exports/imports a JSON file and can schedule automatic backups to `~/Documents/Sixfaced/`.
 - **Upgrading from Streambert:** on first launch Sixfaced copies the old `streambert` profile (library, history, progress, downloads) into the new folder. The macOS keychain entry is app-scoped, so the TMDB token has to be entered once after the rename.

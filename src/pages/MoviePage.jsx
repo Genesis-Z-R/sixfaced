@@ -92,6 +92,7 @@ export default function MoviePage({
   const [trailerKey, setTrailerKey] = useState(null);
   const [showTrailer, setShowTrailer] = useState(false);
   const [m3u8Url, setM3u8Url] = useState(null);
+  const [streamInfo, setStreamInfo] = useState(null);
   const [interceptedSubs, setInterceptedSubs] = useState([]);
   const [playerSource, setPlayerSource] = useState(() => {
     const isAnimeInit = Boolean(item?.isAnime === true || isAnimeContent(item));
@@ -310,6 +311,7 @@ export default function MoviePage({
   // Reset m3u8 URL, subtitle URL and source menu whenever the movie or source changes
   useEffect(() => {
     setM3u8Url(null);
+    setStreamInfo(null);
     setInterceptedSubs([]);
     setShowSourceMenu(false);
     setAnilistData(null);
@@ -368,6 +370,7 @@ export default function MoviePage({
       const cached = getFailoverSource(epKey);
       if (cached && cached !== playerSource) {
         setM3u8Url(null);
+        setStreamInfo(null);
         setInterceptedSubs([]);
         resolvedPlayerUrlRef.current = null;
         setResolvedPlayerUrl(null);
@@ -411,6 +414,7 @@ export default function MoviePage({
                 resolvedPlayerUrlRef.current = r.playerUrl;
                 setResolvedPlayerUrl(r.playerUrl);
                 setM3u8Url(res.url);
+                setStreamInfo({ url: res.url, headers: null, at: Date.now() });
               })
               .catch(() => {
                 if (mounted) setResolveError("Failed to start local player");
@@ -426,6 +430,7 @@ export default function MoviePage({
           if (next) {
             setFailoverSource(epKey, next);
             setM3u8Url(null);
+            setStreamInfo(null);
             setInterceptedSubs([]);
             resolvedPlayerUrlRef.current = null;
             setResolvedPlayerUrl(null);
@@ -463,8 +468,27 @@ export default function MoviePage({
 
   useEffect(() => {
     if (!window.electron) return;
+    const handler = window.electron.onStreamFound((info) => {
+      if (!info?.url) return;
+      // First manifest after a source/episode change is the master playlist;
+      // later ones are variants (possibly audio-only), so keep the first.
+      setStreamInfo((prev) => {
+        if (!prev) return info;
+        if (prev.url === info.url) return { ...prev, ...info };
+        return prev;
+      });
+      setM3u8Url((prev) => prev || info.url);
+    });
+    return () => window.electron.offStreamFound(handler);
+  }, []);
+
+  // Fallback for requests that never hit onBeforeSendHeaders.
+  useEffect(() => {
+    if (!window.electron) return;
     const handler = window.electron.onM3u8Found((url) => {
-      setM3u8Url((prev) => (prev !== url ? url : prev));
+      if (!url) return;
+      setStreamInfo((prev) => prev || { url, headers: null, pageUrl: null, at: Date.now() });
+      setM3u8Url((prev) => prev || url);
     });
     return () => window.electron.offM3u8Found(handler);
   }, []);
@@ -777,6 +801,7 @@ export default function MoviePage({
 
   const handlePlay = useCallback(() => {
     setM3u8Url(null);
+    setStreamInfo(null);
     setInterceptedSubs([]);
     setPlaying(true);
     onHistory({ ...d, media_type: "movie" });
@@ -1205,6 +1230,7 @@ export default function MoviePage({
                     setDubMode(next);
                     storage.set(STORAGE_KEYS.ALLMANGA_DUB_MODE, next);
                     setM3u8Url(null);
+                    setStreamInfo(null);
                     setInterceptedSubs([]);
                     resolvedPlayerUrlRef.current = null;
                     setResolvedPlayerUrl(null);
@@ -1294,6 +1320,7 @@ export default function MoviePage({
                         storage.set(STORAGE_KEYS.PLAYER_SOURCE, src.id);
                       }
                       setM3u8Url(null);
+                      setStreamInfo(null);
                       setInterceptedSubs([]);
                       resolvedPlayerUrlRef.current = null;
                       setResolvedPlayerUrl(null);
@@ -1436,6 +1463,7 @@ export default function MoviePage({
         <DownloadModal
           onClose={() => setShowDownload(false)}
           m3u8Url={m3u8Url}
+          stream={streamInfo}
           subtitles={interceptedSubs}
           mediaName={mediaName}
           downloaderFolder={downloaderFolder}

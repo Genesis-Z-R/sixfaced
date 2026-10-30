@@ -372,6 +372,7 @@ export function SubtitleBrowser({
 export default function DownloadModal({
   onClose,
   m3u8Url,
+  stream = null,
   subtitles = [],
   mediaName,
   downloaderFolder,
@@ -386,6 +387,7 @@ export default function DownloadModal({
   tmdbId,
 }) {
   const modalRef = useModalKeys(onClose);
+  const effectiveUrl = stream?.url || m3u8Url;
 
   const [downloadPath, setDownloadPath] = useState(
     () => storage.get("downloadPath") || "",
@@ -518,11 +520,11 @@ export default function DownloadModal({
   );
 
   useEffect(() => {
-    if (!m3u8Url || !subEnabled || !canSearchOS) return;
+    if (!effectiveUrl || !subEnabled || !canSearchOS) return;
     if (wyzieApiKey === null) return; // still loading
     if (!wyzieApiKey && !subdlApiKey) return;
     searchSubtitles(defaultLang);
-  }, [m3u8Url, subEnabled, wyzieApiKey]);
+  }, [effectiveUrl, subEnabled, wyzieApiKey]);
 
   const pickBinaryFolder = async () => {
     const folder = await window.electron.pickFolder();
@@ -538,7 +540,7 @@ export default function DownloadModal({
   };
 
   const handleDownload = async () => {
-    if (!downloadPath || !m3u8Url) return;
+    if (!downloadPath || !effectiveUrl) return;
     setDownloadStatus("starting");
 
     let resolvedSubs = [...subtitles];
@@ -570,7 +572,10 @@ export default function DownloadModal({
 
     const result = await window.electron.runDownload({
       token: downloader.token,
-      m3u8Url,
+      m3u8Url: effectiveUrl,
+      headers: stream?.headers || null,
+      capturedAt: stream?.at || null,
+      pageUrl: stream?.pageUrl || null,
       subtitles: resolvedSubs,
       name: mediaName,
       downloadPath,
@@ -726,7 +731,7 @@ export default function DownloadModal({
             </button>
           </div>
 
-          {!m3u8Url && (
+          {!effectiveUrl && (
             <div className="download-waiting">
               <div
                 className="spinner"
@@ -736,11 +741,25 @@ export default function DownloadModal({
             </div>
           )}
 
-          {m3u8Url && (
+          {effectiveUrl && (
             <>
               <div className="download-url-block">
                 <div className="download-url-label">Stream URL found</div>
-                <code className="download-url-code">{m3u8Url}</code>
+                <code className="download-url-code">{effectiveUrl}</code>
+                {stream?.at && (
+                  <div
+                    style={{
+                      marginTop: 6,
+                      fontSize: 11,
+                      color: "var(--text3)",
+                    }}
+                  >
+                    Captured with the player session
+                    {stream.headers ? " (Referer / cookies preserved)" : ""} ·{" "}
+                    {Math.max(0, Math.round((Date.now() - stream.at) / 1000))}s
+                    ago
+                  </div>
+                )}
               </div>
 
               {/* ── Subtitle section ──────────────────────────────────────── */}

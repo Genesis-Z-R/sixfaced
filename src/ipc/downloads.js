@@ -13,6 +13,7 @@ const { writeJsonAtomic, readJsonWithBackup, keepBackup } = require("./fsSafe");
 const { isWithinAny, downloadRoots } = require("./pathSafety");
 const { assertPublicHttpUrl } = require("./netGuard");
 const { ensureTools } = require("./downloadTools");
+const { probeStream, sanitizeHeaders } = require("./streamProbe");
 
 const LOG_PREFIX = "sixfaced_dl_";
 const LEGACY_LOG_PREFIX = "streambert_dl_";
@@ -273,7 +274,11 @@ function schedule() {
 }
 
 function logPathFor(id) {
-  return path.join(os.tmpdir(), `${LOG_PREFIX}${id}.log`);
+  const dir = path.join(app.getPath("userData"), "logs", "downloads");
+  try {
+    fs.mkdirSync(dir, { recursive: true });
+  } catch {}
+  return path.join(dir, `${id}.log`);
 }
 
 async function startJob(entry) {
@@ -343,6 +348,16 @@ async function startJob(entry) {
     return;
   }
 
+  // A queued job may have waited long enough for the token to expire.
+  const capturedAt = entry.capturedAt || 0;
+  if (capturedAt && Date.now() - capturedAt > 8 * 60 * 1000) {
+    const fresh = await probeStream(entry.m3u8Url, entry.headers || {});
+    if (!fresh.ok) {
+      finish("error", fresh.message);
+      return;
+    }
+  }
+
   entry.lastMessage = "Starting download…";
   sendProgress({ id, lastMessage: entry.lastMessage, status: "downloading" });
 
@@ -351,10 +366,17 @@ async function startJob(entry) {
       .replace(/[<>:"/\\|?*\x00-\x1f]/g, "")
       .replace(/\s+/g, " ")
       .trim() || "download";
-  let referer = "https://www.google.com/";
+  const captured = entry.headers || {};
+  let referer = captured.referer || "https://www.google.com/";
   try {
-    referer = new URL(m3u8Url).origin + "/";
+    if (!captured.referer) referer = new URL(m3u8Url).origin + "/";
   } catch {}
+  const origin = captured.origin || null;
+  const cookie = captured.cookie || null;
+  const authorization = captured.authorization || null;
+  const userAgent =
+    captured["user-agent"] ||
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
 
   const args = [
     "--no-playlist",
@@ -381,8 +403,11 @@ async function startJob(entry) {
     "bv*+ba/b",
     "--add-header",
     `Referer:${referer}`,
+    ...(origin ? ["--add-header", `Origin:${origin}`] : []),
+    ...(cookie ? ["--add-header", `Cookie:${cookie}`] : []),
+    ...(authorization ? ["--add-header", `Authorization:${authorization}`] : []),
     "--user-agent",
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36",
+    userAgent,
     "-o",
     path.join(downloadPath, `${safeName}.%(ext)s`),
     m3u8Url,
@@ -662,7 +687,7 @@ function register(getMainWindow) {
   });
 
   // ── start download (enqueue) ──────────────────────────────────────────────
-  ipcMain.handle("run-download", (_, payload = {}) => {
+  ipcMain.handle("run-download", async (_, payload = {}) => {
     try {
       const {
         m3u8Url,
@@ -675,6 +700,9 @@ function register(getMainWindow) {
         posterPath,
         tmdbId,
         subtitles,
+        headers,
+        capturedAt,
+        pageUrl,
       } = payload;
 
       if (!m3u8Url || !downloadPath) {
@@ -702,6 +730,13 @@ function register(getMainWindow) {
         };
       }
 
+      // Fail fast with a real reason instead of queueing a dead link.
+      const safeHeaders = sanitizeHeaders(headers);
+      const probe = await probeStream(m3u8Url, safeHeaders);
+      if (!probe.ok) {
+        return { ok: false, error: probe.message, code: probe.code };
+      }
+
       const id = crypto.randomUUID();
       const entry = {
         id,
@@ -727,6 +762,11 @@ function register(getMainWindow) {
         subtitles: Array.isArray(subtitles) ? subtitles : [],
         subtitlePaths: [],
         logPath: null,
+        headers: safeHeaders,
+        capturedAt: capturedAt || Date.now(),
+        pageUrl: pageUrl || null,
+        httpStatus: probe.status,
+        streamKind: probe.kind,
       };
 
       downloads.push(entry);

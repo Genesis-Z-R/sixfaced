@@ -9,6 +9,14 @@ contextBridge.exposeInMainWorld("electron", {
   },
   offM3u8Found: (h) => ipcRenderer.removeListener("m3u8-found", h),
 
+  // full stream context (url + request headers + player page)
+  onStreamFound: (cb) => {
+    const h = (_, data) => cb(data);
+    ipcRenderer.on("stream-found", h);
+    return h;
+  },
+  offStreamFound: (h) => ipcRenderer.removeListener("stream-found", h),
+
   // subtitle capture (.vtt / .srt), cb receives { url, lang }
   onSubtitleFound: (cb) => {
     const h = (_, data) => cb(data);
