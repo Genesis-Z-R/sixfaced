@@ -72,6 +72,10 @@ import {
   GAMEPAD_CLEANUP_JS,
 } from "../utils/playerGamepadScript";
 import { PLAYER_CONTROLS_SCRIPT } from "../utils/playerKeyboardScript";
+import {
+  PLAYER_CHROME_SCRIPT,
+  COMPACT_CHROME_SOURCES,
+} from "../utils/playerChromeScript";
 import { usePlayerKeyboardControls } from "../hooks/usePlayerKeyboardControls";
 import { setPlayerGamepadActive } from "../utils/gamepadPlayerState";
 
@@ -1556,6 +1560,30 @@ export default function TVPage({
 
     return () => {
       wv.removeEventListener("dom-ready", inject);
+    };
+  }, [playing, playerSource]);
+
+  // Scale down the provider's own chrome (see playerChromeScript).
+  useEffect(() => {
+    const wv = webviewRef.current;
+    if (!wv || !playing) return;
+    if (!COMPACT_CHROME_SOURCES.includes(playerSource)) return;
+
+    const apply = () => {
+      wv.executeJavaScript(PLAYER_CHROME_SCRIPT).catch(() => {});
+    };
+
+    wv.addEventListener("dom-ready", apply);
+
+    try {
+      apply();
+    } catch {}
+
+    const timers = [1500, 4000, 8000].map((ms) => setTimeout(apply, ms));
+
+    return () => {
+      wv.removeEventListener("dom-ready", apply);
+      timers.forEach(clearTimeout);
     };
   }, [playing, playerSource]);
 
