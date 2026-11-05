@@ -65,7 +65,7 @@ import {
 } from "../utils/playerGamepadScript";
 import { PLAYER_CONTROLS_SCRIPT } from "../utils/playerKeyboardScript";
 import {
-  PLAYER_CHROME_SCRIPT,
+  buildPlayerChromeScript,
   COMPACT_CHROME_SOURCES,
 } from "../utils/playerChromeScript";
 import SubtitleToggleButton from "../components/SubtitleToggleButton";
@@ -644,7 +644,10 @@ export default function MoviePage({
     if (!COMPACT_CHROME_SOURCES.includes(playerSource)) return;
 
     const apply = () => {
-      wv.executeJavaScript(PLAYER_CHROME_SCRIPT).catch(() => {});
+      // Movies never have a next episode, so the provider's button is hidden.
+      wv.executeJavaScript(buildPlayerChromeScript({ hasNextEpisode: false })).catch(
+        () => {},
+      );
     };
     wv.addEventListener("dom-ready", apply);
     try {

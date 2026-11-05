@@ -73,7 +73,7 @@ import {
 } from "../utils/playerGamepadScript";
 import { PLAYER_CONTROLS_SCRIPT } from "../utils/playerKeyboardScript";
 import {
-  PLAYER_CHROME_SCRIPT,
+  buildPlayerChromeScript,
   COMPACT_CHROME_SOURCES,
 } from "../utils/playerChromeScript";
 import SubtitleToggleButton from "../components/SubtitleToggleButton";
@@ -969,6 +969,17 @@ export default function TVPage({
     seasonData,
   ]);
 
+  // Whether an episode follows the selected one in this season. The provider's
+  // "Next Episode" button is only allowed to appear when this is true AND the
+  // current episode is nearly over (see playerChromeScript).
+  const hasNextEpisode = useMemo(() => {
+    if (!selectedEp) return false;
+    const idx = currentSeasonEpisodes.findIndex(
+      (e) => e.episode_number === selectedEp.episode_number,
+    );
+    return idx >= 0 && idx < currentSeasonEpisodes.length - 1;
+  }, [currentSeasonEpisodes, selectedEp]);
+
   // Find user's last watched progress for this show across history
   const lastWatched = useMemo(() => {
     try {
@@ -1571,7 +1582,9 @@ export default function TVPage({
     if (!COMPACT_CHROME_SOURCES.includes(playerSource)) return;
 
     const apply = () => {
-      wv.executeJavaScript(PLAYER_CHROME_SCRIPT).catch(() => {});
+      wv.executeJavaScript(
+        buildPlayerChromeScript({ hasNextEpisode }),
+      ).catch(() => {});
     };
 
     wv.addEventListener("dom-ready", apply);
@@ -1586,7 +1599,7 @@ export default function TVPage({
       wv.removeEventListener("dom-ready", apply);
       timers.forEach(clearTimeout);
     };
-  }, [playing, playerSource]);
+  }, [playing, playerSource, hasNextEpisode]);
 
   // ── Exact-second resume seeker ───────────────────────────────────────────
   useEffect(() => {
