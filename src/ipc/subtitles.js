@@ -2,7 +2,7 @@
 // Handles subtitle search (SubDL + Wyzie), ZIP extraction, download-for-file,
 // and subtitle registry management in the downloads store.
 
-const { ipcMain } = require("electron");
+const { ipcMain, BrowserWindow, clipboard } = require("electron");
 const path = require("path");
 const fs = require("fs");
 const https = require("https");
@@ -18,6 +18,26 @@ function fetchWithTimeout(url, options = {}, ms = 15000) {
   return fetch(url, { ...options, signal: controller.signal }).finally(() =>
     clearTimeout(timer),
   );
+}
+
+// ── Convert a fetched subtitle file into WebVTT ──────────────────────────────
+// SRT and VTT are the only formats <track> can render, so anything else is
+// rejected rather than silently attached as garbage.
+function toWebVtt(raw) {
+  if (!raw) return null;
+  let text = String(raw).replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n").trim();
+  if (!text) return null;
+  if (/^WEBVTT\b/.test(text)) return text + "\n";
+
+  const out = ["WEBVTT", ""];
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    // SRT cue indices are bare numbers on their own line.
+    if (/^\d+$/.test(t)) continue;
+    out.push(line.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2"));
+  }
+  const joined = out.join("\n").replace(/\n{3,}/g, "\n\n");
+  return joined.includes("-->") ? joined + "\n" : null;
 }
 
 // ── ZIP subtitle extractor ────────────────────────────────────────────────────
@@ -552,6 +572,143 @@ function register({ getDownloads, saveDownloads }) {
       return { ok: false, error: e.message };
     }
   });
+
+  // ── Wyzie API key: validate & redeem ──────────────────────────────────────
+  // preload.js has always exposed wyzieValidateKey / wyzieOpenRedeem and
+  // WyzieKeyModal has always called them, but no handler was ever registered,
+  // so the modal could only ever show "No handler registered for ...".
+  ipcMain.handle("wyzie-validate-key", async (_, key) => {
+    const trimmed = typeof key === "string" ? key.trim() : "";
+    if (!trimmed) return { ok: false, error: "No API key provided." };
+    try {
+      // Any 200 from an authenticated search proves the key is live. The TMDB id
+      // is just a probe; whether it returns subtitles is irrelevant.
+      const url =
+        "https://sub.wyzie.io/search?id=27205&format=srt&key=" +
+        encodeURIComponent(trimmed);
+      const res = await fetchWithTimeout(url, {}, 15000);
+      if (res.status === 401 || res.status === 403) {
+        return {
+          ok: false,
+          error: `Wyzie rejected the key (HTTP ${res.status}).`,
+        };
+      }
+      if (res.status === 429) {
+        return {
+          ok: false,
+          error: "Wyzie is rate limiting - try again in a minute.",
+        };
+      }
+      if (!res.ok) {
+        return { ok: false, error: `Wyzie returned HTTP ${res.status}.` };
+      }
+      await res.json().catch(() => null);
+      return { ok: true };
+    } catch (e) {
+      return { ok: false, error: e?.message || "Could not reach Wyzie." };
+    }
+  });
+
+  ipcMain.handle("wyzie-open-redeem", async (event) => {
+    const parent = BrowserWindow.fromWebContents(event.sender) || undefined;
+    let win;
+    try {
+      win = new BrowserWindow({
+        width: 560,
+        height: 760,
+        parent,
+        show: true,
+        backgroundColor: "#111111",
+        title: "Wyzie - claim an API key",
+        webPreferences: {
+          partition: "persist:wyzie",
+          nodeIntegration: false,
+          contextIsolation: true,
+        },
+      });
+    } catch (e) {
+      return {
+        ok: false,
+        error: e?.message || "Could not open the redeem window.",
+      };
+    }
+
+    let closed = false;
+    win.on("closed", () => {
+      closed = true;
+    });
+
+    try {
+      await win.loadURL("https://store.wyzie.io/redeem");
+    } catch {
+      if (!win.isDestroyed()) win.destroy();
+      return { ok: false, error: "Could not load the Wyzie redeem page." };
+    }
+
+    // The redeem flow is email + code, then the key is shown on the page. Watch
+    // the page text (and the clipboard, since the page has a copy button) for a
+    // "wyzie-..." token until the user closes the window or we time out.
+    const keyPattern = /wyzie-[A-Za-z0-9._-]{6,}/;
+    const deadline = Date.now() + 180000;
+
+    while (Date.now() < deadline) {
+      if (closed || win.isDestroyed()) return { cancelled: true };
+
+      let pageText = "";
+      try {
+        pageText = await win.webContents.executeJavaScript(
+          "document.body ? document.body.innerText : ''",
+        );
+      } catch {
+        // Navigation in flight - try again on the next tick.
+      }
+
+      const fromPage = pageText && pageText.match(keyPattern);
+      if (fromPage) {
+        if (!win.isDestroyed()) win.destroy();
+        return { ok: true, key: fromPage[0] };
+      }
+
+      const fromClipboard = (clipboard.readText() || "").match(keyPattern);
+      if (fromClipboard) {
+        if (!win.isDestroyed()) win.destroy();
+        return { ok: true, key: fromClipboard[0] };
+      }
+
+      await new Promise((resolve) => setTimeout(resolve, 1500));
+    }
+
+    if (!win.isDestroyed()) win.destroy();
+    return { ok: false, timeout: true };
+  });
+
+  // ── Fetch a subtitle and hand the renderer WebVTT ─────────────────────────
+  // Used for live playback: the <track> element needs VTT, and doing the fetch
+  // here keeps us clear of the player frame's CORS rules.
+  ipcMain.handle("fetch-subtitle-vtt", async (_, { url }) => {
+    try {
+      if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
+        return { ok: false, error: "Invalid subtitle URL" };
+      }
+      const res = await fetchWithTimeout(url, { redirect: "follow" }, 20000);
+      if (!res.ok) {
+        return { ok: false, error: `Subtitle download failed (HTTP ${res.status})` };
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      let text;
+      if (buf[0] === 0x50 && buf[1] === 0x4b) {
+        text = extractFirstSubtitleFromZip(buf);
+        if (!text) return { ok: false, error: "No subtitle found in archive" };
+      } else {
+        text = buf.toString("utf8");
+      }
+      const vtt = toWebVtt(text);
+      if (!vtt) return { ok: false, error: "Unsupported subtitle format" };
+      return { ok: true, vtt };
+    } catch (e) {
+      return { ok: false, error: e?.message || "Could not download subtitle" };
+    }
+  });
 }
 
-module.exports = { register, extractSubtitleLang };
+module.exports = { register, extractSubtitleLang, toWebVtt };

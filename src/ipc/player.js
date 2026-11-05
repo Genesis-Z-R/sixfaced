@@ -737,6 +737,107 @@ function register(getMainWindow, { writeSecretMigration }) {
     }
   });
 
+  // ── Live subtitle track for the playing video ─────────────────────────────
+  // Attaches a WebVTT track to whichever frame actually owns the <video>, so
+  // Wyzie / SubDL subtitles show up during streaming without downloading.
+  const collectFrames = (wc) => {
+    const all = [];
+    const walk = (frame) => {
+      all.push(frame);
+      for (const child of frame.frames || []) walk(child);
+    };
+    walk(wc.mainFrame);
+    return all;
+  };
+
+  const attachTrackScript = (payload) => `
+    (() => {
+      try {
+        const p = ${JSON.stringify(payload)};
+        const v = document.querySelector('video');
+        if (!v) return { ok: false, reason: 'no-video' };
+        if (v.__sbSubUrl) { try { URL.revokeObjectURL(v.__sbSubUrl); } catch (e) {} }
+        if (v.__sbTrack) { try { v.removeChild(v.__sbTrack); } catch (e) {} v.__sbTrack = null; }
+        const url = URL.createObjectURL(new Blob([p.vtt], { type: 'text/vtt' }));
+        const track = document.createElement('track');
+        track.kind = 'subtitles';
+        track.label = p.label;
+        track.srclang = p.lang;
+        track.src = url;
+        track.default = true;
+        track.addEventListener('load', () => {
+          try { track.track.mode = 'showing'; } catch (e) {}
+        });
+        v.appendChild(track);
+        v.__sbTrack = track;
+        v.__sbSubUrl = url;
+        try {
+          for (const t of v.textTracks) if (t.label === p.label) t.mode = 'showing';
+        } catch (e) {}
+        return { ok: true, label: p.label };
+      } catch (e) {
+        return { ok: false, error: String(e) };
+      }
+    })()
+  `;
+
+  ipcMain.handle(
+    "attach-subtitle-track",
+    async (_, { webContentsId, vtt, label, lang }) => {
+      try {
+        const { webContents } = require("electron");
+        const wc = webContents.fromId(webContentsId);
+        if (!wc || wc.isDestroyed()) {
+          return { ok: false, error: "Player window not found" };
+        }
+        if (typeof vtt !== "string" || !vtt.trim()) {
+          return { ok: false, error: "Empty subtitle data" };
+        }
+        const script = attachTrackScript({
+          vtt,
+          label: String(label || "Subtitles"),
+          lang: String(lang || "en"),
+        });
+        for (const frame of collectFrames(wc)) {
+          try {
+            const res = await frame.executeJavaScript(script);
+            if (res && res.ok) return { ok: true, label: res.label };
+          } catch {}
+        }
+        return { ok: false, error: "No playable video element found" };
+      } catch (e) {
+        return { ok: false, error: e.message };
+      }
+    },
+  );
+
+  ipcMain.handle("clear-subtitle-track", async (_, webContentsId) => {
+    try {
+      const { webContents } = require("electron");
+      const wc = webContents.fromId(webContentsId);
+      if (!wc || wc.isDestroyed()) return { ok: false };
+      const script = `
+        (() => {
+          const v = document.querySelector('video');
+          if (!v) return { ok: false };
+          if (v.__sbTrack) { try { v.removeChild(v.__sbTrack); } catch (e) {} v.__sbTrack = null; }
+          if (v.__sbSubUrl) { try { URL.revokeObjectURL(v.__sbSubUrl); } catch (e) {} v.__sbSubUrl = null; }
+          try { for (const t of v.textTracks) t.mode = 'disabled'; } catch (e) {}
+          return { ok: true };
+        })()
+      `;
+      for (const frame of collectFrames(wc)) {
+        try {
+          const res = await frame.executeJavaScript(script);
+          if (res && res.ok) return { ok: true };
+        } catch {}
+      }
+      return { ok: false };
+    } catch {
+      return { ok: false };
+    }
+  });
+
   // ── Seek video across all frames in a webContents (cross-origin embeds) ──
   ipcMain.handle("seek-player-video", async (_, { webContentsId, targetTime }) => {
     try {

@@ -72,6 +72,11 @@ import {
   GAMEPAD_CLEANUP_JS,
 } from "../utils/playerGamepadScript";
 import { PLAYER_CONTROLS_SCRIPT } from "../utils/playerKeyboardScript";
+import {
+  buildPlayerChromeScript,
+  COMPACT_CHROME_SOURCES,
+} from "../utils/playerChromeScript";
+import SubtitleToggleButton from "../components/SubtitleToggleButton";
 import { usePlayerKeyboardControls } from "../hooks/usePlayerKeyboardControls";
 import { setPlayerGamepadActive } from "../utils/gamepadPlayerState";
 
@@ -964,6 +969,17 @@ export default function TVPage({
     seasonData,
   ]);
 
+  // Whether an episode follows the selected one in this season. The provider's
+  // "Next Episode" button is only allowed to appear when this is true AND the
+  // current episode is nearly over (see playerChromeScript).
+  const hasNextEpisode = useMemo(() => {
+    if (!selectedEp) return false;
+    const idx = currentSeasonEpisodes.findIndex(
+      (e) => e.episode_number === selectedEp.episode_number,
+    );
+    return idx >= 0 && idx < currentSeasonEpisodes.length - 1;
+  }, [currentSeasonEpisodes, selectedEp]);
+
   // Find user's last watched progress for this show across history
   const lastWatched = useMemo(() => {
     try {
@@ -1558,6 +1574,32 @@ export default function TVPage({
       wv.removeEventListener("dom-ready", inject);
     };
   }, [playing, playerSource]);
+
+  // Scale down the provider's own chrome (see playerChromeScript).
+  useEffect(() => {
+    const wv = webviewRef.current;
+    if (!wv || !playing) return;
+    if (!COMPACT_CHROME_SOURCES.includes(playerSource)) return;
+
+    const apply = () => {
+      wv.executeJavaScript(
+        buildPlayerChromeScript({ hasNextEpisode }),
+      ).catch(() => {});
+    };
+
+    wv.addEventListener("dom-ready", apply);
+
+    try {
+      apply();
+    } catch {}
+
+    const timers = [1500, 4000, 8000].map((ms) => setTimeout(apply, ms));
+
+    return () => {
+      wv.removeEventListener("dom-ready", apply);
+      timers.forEach(clearTimeout);
+    };
+  }, [playing, playerSource, hasNextEpisode]);
 
   // ── Exact-second resume seeker ───────────────────────────────────────────
   useEffect(() => {
@@ -2446,6 +2488,15 @@ export default function TVPage({
                       {dubMode === "sub" ? "SUB" : "DUB"}
                     </button>
                   )}
+                  {/* Live subtitle toggle */}
+                  <SubtitleToggleButton
+                    webviewRef={webviewRef}
+                    tmdbId={item.id}
+                    mediaType="tv"
+                    season={selectedSeason}
+                    episode={selectedEp?.episode_number}
+                    lang={playerSubLang || ""}
+                  />
                   {/* Blocked ads & trackers button */}
                   <button
                     className="player-overlay-btn"

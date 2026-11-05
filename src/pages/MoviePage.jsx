@@ -64,6 +64,11 @@ import {
   GAMEPAD_CLEANUP_JS,
 } from "../utils/playerGamepadScript";
 import { PLAYER_CONTROLS_SCRIPT } from "../utils/playerKeyboardScript";
+import {
+  buildPlayerChromeScript,
+  COMPACT_CHROME_SOURCES,
+} from "../utils/playerChromeScript";
+import SubtitleToggleButton from "../components/SubtitleToggleButton";
 import { usePlayerKeyboardControls } from "../hooks/usePlayerKeyboardControls";
 import { setPlayerGamepadActive } from "../utils/gamepadPlayerState";
 
@@ -627,6 +632,33 @@ export default function MoviePage({
 
     return () => {
       wv.removeEventListener("dom-ready", inject);
+    };
+  }, [playing, playerSource]);
+
+  // Scale down the provider's own chrome (vidfast ships an oversized title
+  // card and centre button). Re-applied a few times because the provider
+  // mounts its controls after its own bundle boots.
+  useEffect(() => {
+    const wv = webviewRef.current;
+    if (!wv || !playing) return;
+    if (!COMPACT_CHROME_SOURCES.includes(playerSource)) return;
+
+    const apply = () => {
+      // Movies never have a next episode, so the provider's button is hidden.
+      wv.executeJavaScript(buildPlayerChromeScript({ hasNextEpisode: false })).catch(
+        () => {},
+      );
+    };
+    wv.addEventListener("dom-ready", apply);
+    try {
+      apply();
+    } catch {}
+
+    const timers = [1500, 4000, 8000].map((ms) => setTimeout(apply, ms));
+
+    return () => {
+      wv.removeEventListener("dom-ready", apply);
+      timers.forEach(clearTimeout);
     };
   }, [playing, playerSource]);
 
@@ -1243,6 +1275,13 @@ export default function MoviePage({
                   {dubMode === "sub" ? "SUB" : "DUB"}
                 </button>
               )}
+              {/* Live subtitle toggle */}
+              <SubtitleToggleButton
+                webviewRef={webviewRef}
+                tmdbId={item.id}
+                mediaType="movie"
+                lang={playerSubLang || ""}
+              />
               {/* Blocked ads & trackers button */}
               <button
                 className="player-overlay-btn"
