@@ -20,6 +20,26 @@ function fetchWithTimeout(url, options = {}, ms = 15000) {
   );
 }
 
+// ── Convert a fetched subtitle file into WebVTT ──────────────────────────────
+// SRT and VTT are the only formats <track> can render, so anything else is
+// rejected rather than silently attached as garbage.
+function toWebVtt(raw) {
+  if (!raw) return null;
+  let text = String(raw).replace(/^\uFEFF/, "").replace(/\r\n?/g, "\n").trim();
+  if (!text) return null;
+  if (/^WEBVTT\b/.test(text)) return text + "\n";
+
+  const out = ["WEBVTT", ""];
+  for (const line of text.split("\n")) {
+    const t = line.trim();
+    // SRT cue indices are bare numbers on their own line.
+    if (/^\d+$/.test(t)) continue;
+    out.push(line.replace(/(\d{2}:\d{2}:\d{2}),(\d{3})/g, "$1.$2"));
+  }
+  const joined = out.join("\n").replace(/\n{3,}/g, "\n\n");
+  return joined.includes("-->") ? joined + "\n" : null;
+}
+
 // ── ZIP subtitle extractor ────────────────────────────────────────────────────
 
 // Max decompressed zip size (10mb) to prevent zip-bombs
@@ -661,6 +681,34 @@ function register({ getDownloads, saveDownloads }) {
     if (!win.isDestroyed()) win.destroy();
     return { ok: false, timeout: true };
   });
+
+  // ── Fetch a subtitle and hand the renderer WebVTT ─────────────────────────
+  // Used for live playback: the <track> element needs VTT, and doing the fetch
+  // here keeps us clear of the player frame's CORS rules.
+  ipcMain.handle("fetch-subtitle-vtt", async (_, { url }) => {
+    try {
+      if (typeof url !== "string" || !/^https?:\/\//i.test(url)) {
+        return { ok: false, error: "Invalid subtitle URL" };
+      }
+      const res = await fetchWithTimeout(url, { redirect: "follow" }, 20000);
+      if (!res.ok) {
+        return { ok: false, error: `Subtitle download failed (HTTP ${res.status})` };
+      }
+      const buf = Buffer.from(await res.arrayBuffer());
+      let text;
+      if (buf[0] === 0x50 && buf[1] === 0x4b) {
+        text = extractFirstSubtitleFromZip(buf);
+        if (!text) return { ok: false, error: "No subtitle found in archive" };
+      } else {
+        text = buf.toString("utf8");
+      }
+      const vtt = toWebVtt(text);
+      if (!vtt) return { ok: false, error: "Unsupported subtitle format" };
+      return { ok: true, vtt };
+    } catch (e) {
+      return { ok: false, error: e?.message || "Could not download subtitle" };
+    }
+  });
 }
 
-module.exports = { register, extractSubtitleLang };
+module.exports = { register, extractSubtitleLang, toWebVtt };

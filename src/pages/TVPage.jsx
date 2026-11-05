@@ -76,6 +76,7 @@ import {
   PLAYER_CHROME_SCRIPT,
   COMPACT_CHROME_SOURCES,
 } from "../utils/playerChromeScript";
+import SubtitleToggleButton from "../components/SubtitleToggleButton";
 import { usePlayerKeyboardControls } from "../hooks/usePlayerKeyboardControls";
 import { setPlayerGamepadActive } from "../utils/gamepadPlayerState";
 
@@ -2474,6 +2475,15 @@ export default function TVPage({
                       {dubMode === "sub" ? "SUB" : "DUB"}
                     </button>
                   )}
+                  {/* Live subtitle toggle */}
+                  <SubtitleToggleButton
+                    webviewRef={webviewRef}
+                    tmdbId={item.id}
+                    mediaType="tv"
+                    season={selectedSeason}
+                    episode={selectedEp?.episode_number}
+                    lang={playerSubLang || ""}
+                  />
                   {/* Blocked ads & trackers button */}
                   <button
                     className="player-overlay-btn"

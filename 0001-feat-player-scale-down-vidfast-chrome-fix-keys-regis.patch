@@ -1,0 +1,362 @@
+From 7beec9601b7d3c80f8d1d01ac209cfaa7e612c87 Mon Sep 17 00:00:00 2001
+From: Sixfaced Fixes <fixes@local>
+Date: Thu, 5 Nov 2026 15:33:40 +0000
+Subject: [PATCH] feat(player): scale down vidfast chrome; fix(keys): register
+ Wyzie IPC handlers
+
+Player chrome (MoviePage, TVPage, new utils/playerChromeScript.js):
+vidfast renders an oversized title card and centre play button over the
+video. Tag those nodes structurally (overlay next to <video>, first
+text-only child, largest button, icon buttons) and style them via
+data-sb-* attributes. Class selectors are unusable because the provider
+uses MUI emotion hashes that change every build. Re-applied on dom-ready
+and a few timed passes; idempotent and a no-op if the markup changes.
+
+Wyzie key flow (src/ipc/subtitles.js):
+preload.js exposed wyzie-validate-key / wyzie-open-redeem and
+WyzieKeyModal called them, but no handler was registered, so the modal
+could only show 'No handler registered'. Validate now probes the
+authenticated search endpoint; redeem opens the store page in a child
+window and watches page text + clipboard for a 'wyzie-' token.
+---
+ src/ipc/subtitles.js            | 111 +++++++++++++++++++++++++++++++-
+ src/pages/MoviePage.jsx         |  28 ++++++++
+ src/pages/TVPage.jsx            |  28 ++++++++
+ src/utils/playerChromeScript.js | 104 ++++++++++++++++++++++++++++++
+ 4 files changed, 270 insertions(+), 1 deletion(-)
+ create mode 100644 src/utils/playerChromeScript.js
+
+diff --git a/src/ipc/subtitles.js b/src/ipc/subtitles.js
+index cbf1c51..a5194b4 100755
+--- a/src/ipc/subtitles.js
++++ b/src/ipc/subtitles.js
+@@ -2,7 +2,7 @@
+ // Handles subtitle search (SubDL + Wyzie), ZIP extraction, download-for-file,
+ // and subtitle registry management in the downloads store.
+ 
+-const { ipcMain } = require("electron");
++const { ipcMain, BrowserWindow, clipboard } = require("electron");
+ const path = require("path");
+ const fs = require("fs");
+ const https = require("https");
+@@ -552,6 +552,115 @@ function register({ getDownloads, saveDownloads }) {
+       return { ok: false, error: e.message };
+     }
+   });
++
++  // ── Wyzie API key: validate & redeem ──────────────────────────────────────
++  // preload.js has always exposed wyzieValidateKey / wyzieOpenRedeem and
++  // WyzieKeyModal has always called them, but no handler was ever registered,
++  // so the modal could only ever show "No handler registered for ...".
++  ipcMain.handle("wyzie-validate-key", async (_, key) => {
++    const trimmed = typeof key === "string" ? key.trim() : "";
++    if (!trimmed) return { ok: false, error: "No API key provided." };
++    try {
++      // Any 200 from an authenticated search proves the key is live. The TMDB id
++      // is just a probe; whether it returns subtitles is irrelevant.
++      const url =
++        "https://sub.wyzie.io/search?id=27205&format=srt&key=" +
++        encodeURIComponent(trimmed);
++      const res = await fetchWithTimeout(url, {}, 15000);
++      if (res.status === 401 || res.status === 403) {
++        return {
++          ok: false,
++          error: `Wyzie rejected the key (HTTP ${res.status}).`,
++        };
++      }
++      if (res.status === 429) {
++        return {
++          ok: false,
++          error: "Wyzie is rate limiting - try again in a minute.",
++        };
++      }
++      if (!res.ok) {
++        return { ok: false, error: `Wyzie returned HTTP ${res.status}.` };
++      }
++      await res.json().catch(() => null);
++      return { ok: true };
++    } catch (e) {
++      return { ok: false, error: e?.message || "Could not reach Wyzie." };
++    }
++  });
++
++  ipcMain.handle("wyzie-open-redeem", async (event) => {
++    const parent = BrowserWindow.fromWebContents(event.sender) || undefined;
++    let win;
++    try {
++      win = new BrowserWindow({
++        width: 560,
++        height: 760,
++        parent,
++        show: true,
++        backgroundColor: "#111111",
++        title: "Wyzie - claim an API key",
++        webPreferences: {
++          partition: "persist:wyzie",
++          nodeIntegration: false,
++          contextIsolation: true,
++        },
++      });
++    } catch (e) {
++      return {
++        ok: false,
++        error: e?.message || "Could not open the redeem window.",
++      };
++    }
++
++    let closed = false;
++    win.on("closed", () => {
++      closed = true;
++    });
++
++    try {
++      await win.loadURL("https://store.wyzie.io/redeem");
++    } catch {
++      if (!win.isDestroyed()) win.destroy();
++      return { ok: false, error: "Could not load the Wyzie redeem page." };
++    }
++
++    // The redeem flow is email + code, then the key is shown on the page. Watch
++    // the page text (and the clipboard, since the page has a copy button) for a
++    // "wyzie-..." token until the user closes the window or we time out.
++    const keyPattern = /wyzie-[A-Za-z0-9._-]{6,}/;
++    const deadline = Date.now() + 180000;
++
++    while (Date.now() < deadline) {
++      if (closed || win.isDestroyed()) return { cancelled: true };
++
++      let pageText = "";
++      try {
++        pageText = await win.webContents.executeJavaScript(
++          "document.body ? document.body.innerText : ''",
++        );
++      } catch {
++        // Navigation in flight - try again on the next tick.
++      }
++
++      const fromPage = pageText && pageText.match(keyPattern);
++      if (fromPage) {
++        if (!win.isDestroyed()) win.destroy();
++        return { ok: true, key: fromPage[0] };
++      }
++
++      const fromClipboard = (clipboard.readText() || "").match(keyPattern);
++      if (fromClipboard) {
++        if (!win.isDestroyed()) win.destroy();
++        return { ok: true, key: fromClipboard[0] };
++      }
++
++      await new Promise((resolve) => setTimeout(resolve, 1500));
++    }
++
++    if (!win.isDestroyed()) win.destroy();
++    return { ok: false, timeout: true };
++  });
+ }
+ 
+ module.exports = { register, extractSubtitleLang };
+diff --git a/src/pages/MoviePage.jsx b/src/pages/MoviePage.jsx
+index 90bf64a..ae09d20 100755
+--- a/src/pages/MoviePage.jsx
++++ b/src/pages/MoviePage.jsx
+@@ -64,6 +64,10 @@ import {
+   GAMEPAD_CLEANUP_JS,
+ } from "../utils/playerGamepadScript";
+ import { PLAYER_CONTROLS_SCRIPT } from "../utils/playerKeyboardScript";
++import {
++  PLAYER_CHROME_SCRIPT,
++  COMPACT_CHROME_SOURCES,
++} from "../utils/playerChromeScript";
+ import { usePlayerKeyboardControls } from "../hooks/usePlayerKeyboardControls";
+ import { setPlayerGamepadActive } from "../utils/gamepadPlayerState";
+ 
+@@ -630,6 +634,30 @@ export default function MoviePage({
+     };
+   }, [playing, playerSource]);
+ 
++  // Scale down the provider's own chrome (vidfast ships an oversized title
++  // card and centre button). Re-applied a few times because the provider
++  // mounts its controls after its own bundle boots.
++  useEffect(() => {
++    const wv = webviewRef.current;
++    if (!wv || !playing) return;
++    if (!COMPACT_CHROME_SOURCES.includes(playerSource)) return;
++
++    const apply = () => {
++      wv.executeJavaScript(PLAYER_CHROME_SCRIPT).catch(() => {});
++    };
++    wv.addEventListener("dom-ready", apply);
++    try {
++      apply();
++    } catch {}
++
++    const timers = [1500, 4000, 8000].map((ms) => setTimeout(apply, ms));
++
++    return () => {
++      wv.removeEventListener("dom-ready", apply);
++      timers.forEach(clearTimeout);
++    };
++  }, [playing, playerSource]);
++
+   // ── Exact-second resume seeker ───────────────────────────────────────────
+   useEffect(() => {
+     const wv = webviewRef.current;
+diff --git a/src/pages/TVPage.jsx b/src/pages/TVPage.jsx
+index ddee622..ca2bf0f 100755
+--- a/src/pages/TVPage.jsx
++++ b/src/pages/TVPage.jsx
+@@ -72,6 +72,10 @@ import {
+   GAMEPAD_CLEANUP_JS,
+ } from "../utils/playerGamepadScript";
+ import { PLAYER_CONTROLS_SCRIPT } from "../utils/playerKeyboardScript";
++import {
++  PLAYER_CHROME_SCRIPT,
++  COMPACT_CHROME_SOURCES,
++} from "../utils/playerChromeScript";
+ import { usePlayerKeyboardControls } from "../hooks/usePlayerKeyboardControls";
+ import { setPlayerGamepadActive } from "../utils/gamepadPlayerState";
+ 
+@@ -1559,6 +1563,30 @@ export default function TVPage({
+     };
+   }, [playing, playerSource]);
+ 
++  // Scale down the provider's own chrome (see playerChromeScript).
++  useEffect(() => {
++    const wv = webviewRef.current;
++    if (!wv || !playing) return;
++    if (!COMPACT_CHROME_SOURCES.includes(playerSource)) return;
++
++    const apply = () => {
++      wv.executeJavaScript(PLAYER_CHROME_SCRIPT).catch(() => {});
++    };
++
++    wv.addEventListener("dom-ready", apply);
++
++    try {
++      apply();
++    } catch {}
++
++    const timers = [1500, 4000, 8000].map((ms) => setTimeout(apply, ms));
++
++    return () => {
++      wv.removeEventListener("dom-ready", apply);
++      timers.forEach(clearTimeout);
++    };
++  }, [playing, playerSource]);
++
+   // ── Exact-second resume seeker ───────────────────────────────────────────
+   useEffect(() => {
+     const wv = webviewRef.current;
+diff --git a/src/utils/playerChromeScript.js b/src/utils/playerChromeScript.js
+new file mode 100644
+index 0000000..9cb3a0c
+--- /dev/null
++++ b/src/utils/playerChromeScript.js
+@@ -0,0 +1,104 @@
++// ── Compact player chrome ─────────────────────────────────────────────────────
++// Some embed providers (vidfast in particular) render a very large title card,
++// an oversized centre play button and chunky control icons on top of the video.
++// They are distracting next to Sixfaced's own UI, so we scale them down inside
++// the player webview.
++//
++// The providers use Material UI with per-build emotion hashes (`.mui-1a2b3c`),
++// so class selectors would break on their next deploy. Instead this script
++// tags the relevant nodes structurally — the overlay that sits next to <video>,
++// its first text-only child (the title card), the largest <button> (the centre
++// CTA) and the remaining icon buttons — and styles them via stable
++// `data-sb-*` attributes that we own.
++//
++// Everything is best-effort: if a provider changes its markup the script simply
++// tags nothing and the page looks untouched.
++
++export const COMPACT_CHROME_SOURCES = ["vidfast"];
++
++export const PLAYER_CHROME_SCRIPT = `
++(function () {
++  if (window.__sbCompactInit) {
++    try { window.__sbCompact(); } catch (e) {}
++    return;
++  }
++  window.__sbCompactInit = true;
++
++  var CSS = [
++    '[data-sb-title]{transform:scale(.85);transform-origin:left top;opacity:.6;transition:opacity .2s ease;pointer-events:none;}',
++    '[data-sb-title] > *{font-size:13px !important;line-height:1.35 !important;letter-spacing:.01em !important;}',
++    '[data-sb-title] > *:first-child{font-size:9px !important;text-transform:uppercase;letter-spacing:.12em !important;opacity:.6;}',
++    '[data-sb-cta]{transform:scale(.6);opacity:.32;transition:transform .18s ease,opacity .18s ease;}',
++    '[data-sb-cta]:hover{transform:scale(.85);opacity:.9;}',
++    '[data-sb-icon]{width:18px !important;height:18px !important;min-width:0 !important;min-height:0 !important;}'
++  ].join('\\n');
++
++  function ensureStyle() {
++    if (document.getElementById('__sb-compact-style')) return;
++    var s = document.createElement('style');
++    s.id = '__sb-compact-style';
++    s.textContent = CSS;
++    (document.head || document.documentElement).appendChild(s);
++  }
++
++  window.__sbCompact = function () {
++    ensureStyle();
++    var video = document.querySelector('video');
++    if (!video || !video.parentElement) return;
++
++    var root = video.parentElement;
++    var overlay = null;
++    for (var i = 0; i < root.children.length; i++) {
++      var c = root.children[i];
++      if (c !== video && c.tagName === 'DIV') { overlay = c; break; }
++    }
++    if (!overlay) return;
++
++    // Title card: first overlay child that holds text but no iconography.
++    var title = overlay.querySelector('[data-sb-title]');
++    if (!title) {
++      for (var j = 0; j < overlay.children.length; j++) {
++        var el = overlay.children[j];
++        var text = (el.textContent || '').trim();
++        if (text.length > 2 && !el.querySelector('svg') && !el.querySelector('button')) {
++          el.setAttribute('data-sb-title', '');
++          break;
++        }
++      }
++    }
++
++    // Centre CTA: the largest button in the overlay, if it is genuinely big.
++    if (!overlay.querySelector('[data-sb-cta]')) {
++      var best = null, bestArea = 0;
++      var btns = overlay.querySelectorAll('button');
++      for (var k = 0; k < btns.length; k++) {
++        var r = btns[k].getBoundingClientRect();
++        var area = r.width * r.height;
++        if (area > bestArea) { bestArea = area; best = btns[k]; }
++      }
++      if (best && bestArea > 6000) best.setAttribute('data-sb-cta', '');
++    }
++
++    // Remaining icon buttons: shrink the glyphs, leave the CTA's own icon alone
++    // (it is already scaled with its button).
++    var cta = overlay.querySelector('[data-sb-cta]');
++    var icons = overlay.querySelectorAll('button svg');
++    for (var m = 0; m < icons.length; m++) {
++      if (cta && cta.contains(icons[m])) continue;
++      icons[m].setAttribute('data-sb-icon', '');
++    }
++  };
++
++  try { window.__sbCompact(); } catch (e) {}
++
++  var pending = null;
++  var observer = new MutationObserver(function () {
++    if (pending) return;
++    pending = setTimeout(function () {
++      pending = null;
++      try { window.__sbCompact(); } catch (e) {}
++    }, 250);
++  });
++  observer.observe(document.documentElement, { childList: true, subtree: true });
++})();
++`;
+-- 
+2.54.0 (Apple Git-157)
+

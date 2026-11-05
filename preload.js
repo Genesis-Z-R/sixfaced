@@ -157,6 +157,12 @@ contextBridge.exposeInMainWorld("electron", {
     ipcRenderer.invoke("download-subtitles-for-file", args),
   deleteSubtitleFile: (args) =>
     ipcRenderer.invoke("delete-subtitle-file", args),
+  // Live subtitle track on the playing video
+  fetchSubtitleVtt: (args) => ipcRenderer.invoke("fetch-subtitle-vtt", args),
+  attachSubtitleTrack: (args) =>
+    ipcRenderer.invoke("attach-subtitle-track", args),
+  clearSubtitleTrack: (webContentsId) =>
+    ipcRenderer.invoke("clear-subtitle-track", webContentsId),
   // Wyzie API key redemption
   wyzieOpenRedeem: () => ipcRenderer.invoke("wyzie-open-redeem"),
   wyzieValidateKey: (key) => ipcRenderer.invoke("wyzie-validate-key", key),
