@@ -9,23 +9,44 @@ const MAX_REDIRECTS = 5;
 const MAX_BYTES = 4096;
 const TIMEOUT_MS = 12_000;
 
-const ALLOWED_HEADERS = new Set([
-  "referer",
-  "origin",
-  "cookie",
-  "user-agent",
-  "authorization",
+// Replay everything the player sent, minus headers the HTTP stack owns or
+// that change the response (these made CDNs 403 the probe while the player
+// itself played fine). A whitelist here silently broke every provider that
+// authenticates with its own header (X-*, tokens, sec-fetch-*).
+const DROPPED_HEADERS = new Set([
+  "host",
+  "connection",
+  "keep-alive",
+  "proxy-connection",
+  "transfer-encoding",
+  "content-length",
+  "upgrade",
+  "te",
+  "trailer",
+  "expect",
+  "accept-encoding",
+  "range",
+  "if-range",
+  "if-none-match",
+  "if-modified-since",
 ]);
 
-/** Keeps only the headers a media CDN may care about. */
+/** Keeps the player's request headers, minus ones we must not replay. */
 function sanitizeHeaders(headers) {
   const out = {};
   if (!headers || typeof headers !== "object") return out;
   for (const [key, value] of Object.entries(headers)) {
-    const name = String(key).toLowerCase();
-    if (!ALLOWED_HEADERS.has(name)) continue;
-    if (value == null) continue;
-    out[name] = String(value).slice(0, 8192);
+    const name = String(key).toLowerCase().trim();
+    if (!name || DROPPED_HEADERS.has(name) || value == null) continue;
+    const v = Array.isArray(value) ? value.join(", ") : String(value);
+    if (!v || v.length > 8192) continue;
+    try {
+      http.validateHeaderName(name);
+      http.validateHeaderValue(name, v);
+    } catch {
+      continue;
+    }
+    out[name] = v;
   }
   return out;
 }
@@ -71,8 +92,10 @@ function request(url, headers, redirectsLeft = MAX_REDIRECTS) {
         method: "GET",
         headers: {
           ...headers,
-          Range: `bytes=0-${MAX_BYTES - 1}`,
-          Accept: "*/*",
+          // No Range: the player never sent one and some CDNs/WAFs answer
+          // 403/416 to a ranged manifest request. We drop the socket after
+          // MAX_BYTES anyway.
+          Accept: headers.accept || "*/*",
         },
       },
       (res) => {

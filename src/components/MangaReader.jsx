@@ -10,7 +10,9 @@ import {
   BookmarkIcon,
   BookmarkFillIcon,
   BackIcon,
+  DownloadIcon,
 } from "./Icons";
+import { storage } from "../utils/storage";
 
 export default function MangaReader({
   manga,
@@ -36,6 +38,7 @@ export default function MangaReader({
   const [controlsVisible, setControlsVisible] = useState(true);
   const [isFullscreen, setIsFullscreen] = useState(false);
   const [isRestoringPosition, setIsRestoringPosition] = useState(false);
+  const [chapterDownload, setChapterDownload] = useState(null); // { kind, text }
 
   const containerRef = useRef(null);
   const scrollContainerRef = useRef(null);
@@ -67,6 +70,41 @@ export default function MangaReader({
   // Stable primitives for dependencies
   const mangaId = manga?.id;
   const mangaTitle = manga?.title || manga?.name;
+
+  // ── Save the open chapter as numbered page images ──────────────────────────
+  const downloadCurrentChapter = useCallback(async () => {
+    if (!window.electron?.downloadChapter || !currentChapter) return;
+    if (!pages.length) return;
+    setChapterDownload({ kind: "busy", text: "Saving chapter…" });
+    try {
+      const res = await window.electron.downloadChapter({
+        pages: pages.map((p) => p.url).filter(Boolean),
+        title: mangaRef.current?.title || mangaRef.current?.name || "Manga",
+        chapterLabel: `Chapter ${currentChapter.chapter}`,
+        downloadPath: storage.get("downloadPath") || null,
+        meta: {
+          mediaType: isManhwa ? "manhwa" : "manga",
+          posterPath:
+            mangaRef.current?.poster_path || mangaRef.current?.cover || null,
+          mediaId: mangaRef.current?.id || null,
+        },
+      });
+      if (res?.ok) {
+        const extra = res.failed ? ` · ${res.failed} failed` : "";
+        setChapterDownload({
+          kind: "ok",
+          text: `Saved ${res.downloaded + (res.skipped || 0)} pages${extra} → ${res.path}`,
+        });
+      } else {
+        setChapterDownload({
+          kind: "err",
+          text: `Couldn't save: ${res?.error || "unknown error"}`,
+        });
+      }
+    } catch (e) {
+      setChapterDownload({ kind: "err", text: `Couldn't save: ${e.message}` });
+    }
+  }, [currentChapter, pages, isManhwa]);
   const initialChapterId = initialChapter?.id;
   const initialChapterNum = initialChapter?.chapter;
 
@@ -676,6 +714,28 @@ export default function MangaReader({
                 ? `Chapter ${currentChapter.chapter}${currentChapter.title ? ` · ${currentChapter.title}` : ""}`
                 : "Loading chapter..."}
             </span>
+            {chapterDownload && (
+              <span
+                className="manga-reader-chapter-label"
+                title={chapterDownload.text}
+                style={{
+                  color:
+                    chapterDownload.kind === "err"
+                      ? "var(--red)"
+                      : "var(--text2)",
+                  maxWidth: 320,
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {chapterDownload.kind === "busy"
+                  ? chapterDownload.text
+                  : chapterDownload.kind === "ok"
+                    ? "✓ Chapter saved"
+                    : chapterDownload.text}
+              </span>
+            )}
           </div>
         </div>
 
@@ -716,6 +776,23 @@ export default function MangaReader({
         </div>
 
         <div className="manga-reader-topbar-right">
+          {/* Save this chapter's pages to disk */}
+          <button
+            className="btn btn-ghost btn-icon"
+            onClick={downloadCurrentChapter}
+            disabled={
+              !window.electron?.downloadChapter ||
+              !pages.length ||
+              chapterDownload?.kind === "busy"
+            }
+            title={
+              chapterDownload?.kind === "ok"
+                ? chapterDownload.text
+                : "Download this chapter"
+            }
+          >
+            <DownloadIcon />
+          </button>
           {/* View Mode Toggle: Vertical Webtoon vs Paginated Flip */}
           <div className="manga-pill-toggle">
             <button

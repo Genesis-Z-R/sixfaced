@@ -40,6 +40,8 @@ contextBridge.exposeInMainWorld("electron", {
   cancelDownload: (id) => ipcRenderer.invoke("cancel-download", id),
   retryDownload: (id) => ipcRenderer.invoke("retry-download", id),
   getDownloads: () => ipcRenderer.invoke("get-downloads"),
+  getDownloadFormats: (args) =>
+    ipcRenderer.invoke("get-download-formats", args),
   deleteDownload: (args) => ipcRenderer.invoke("delete-download", args),
   showInFolder: (path) => ipcRenderer.invoke("show-in-folder", path),
   fileExists: (path) => ipcRenderer.invoke("file-exists", path),
@@ -155,6 +157,8 @@ contextBridge.exposeInMainWorld("electron", {
   getSubtitleUrl: (args) => ipcRenderer.invoke("get-subtitle-url", args),
   downloadSubtitlesForFile: (args) =>
     ipcRenderer.invoke("download-subtitles-for-file", args),
+  // Manga / manhwa chapter saver (page images → folder)
+  downloadChapter: (args) => ipcRenderer.invoke("download-chapter", args),
   deleteSubtitleFile: (args) =>
     ipcRenderer.invoke("delete-subtitle-file", args),
   // Live subtitle track on the playing video

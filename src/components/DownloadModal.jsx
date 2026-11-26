@@ -433,6 +433,11 @@ export default function DownloadModal({
   const [subSearchError, setSubSearchError] = useState(null);
   const [selectedSubs, setSelectedSubs] = useState([]);
   const [showBrowser, setShowBrowser] = useState(false);
+  // Quality / size picker
+  const [formatOptions, setFormatOptions] = useState([]);
+  const [formatsLoading, setFormatsLoading] = useState(false);
+  const [formatsError, setFormatsError] = useState(null);
+  const [selectedFormat, setSelectedFormat] = useState("");
 
   const canSearchOS = isElectron && !!tmdbId;
 
@@ -526,6 +531,37 @@ export default function DownloadModal({
     searchSubtitles(defaultLang);
   }, [effectiveUrl, subEnabled, wyzieApiKey]);
 
+  // Ask the downloader what qualities exist and how big each one is.
+  useEffect(() => {
+    if (!isElectron || !effectiveUrl) return;
+    let mounted = true;
+    setFormatsLoading(true);
+    setFormatsError(null);
+    setFormatOptions([]);
+    setSelectedFormat("");
+    window.electron
+      .getDownloadFormats?.({ m3u8Url: effectiveUrl, headers: stream?.headers || null })
+      .then((res) => {
+        if (!mounted) return;
+        if (res?.ok) setFormatOptions(res.options || []);
+        else setFormatsError(res?.error || "unavailable");
+      })
+      .catch((e) => {
+        if (mounted) setFormatsError(e.message);
+      })
+      .finally(() => {
+        if (mounted) setFormatsLoading(false);
+      });
+    return () => {
+      mounted = false;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [effectiveUrl]);
+
+  const selectedOption = formatOptions.find(
+    (f) => f.selector === selectedFormat,
+  );
+
   const pickBinaryFolder = async () => {
     const folder = await window.electron.pickFolder();
     if (folder) setDownloaderFolder(folder);
@@ -576,6 +612,8 @@ export default function DownloadModal({
       headers: stream?.headers || null,
       capturedAt: stream?.at || null,
       pageUrl: stream?.pageUrl || null,
+      formatSelector: selectedFormat || null,
+      quality: selectedOption?.label || null,
       subtitles: resolvedSubs,
       name: mediaName,
       downloadPath,
@@ -610,6 +648,7 @@ export default function DownloadModal({
         tmdbId: tmdbId || mediaId || null,
         subtitles: resolvedSubs,
         subtitlePaths: [],
+        quality: selectedOption?.label || null,
       });
       setDownloadStatus("ok");
     } else {
@@ -758,6 +797,69 @@ export default function DownloadModal({
                     {stream.headers ? " (Referer / cookies preserved)" : ""} ·{" "}
                     {Math.max(0, Math.round((Date.now() - stream.at) / 1000))}s
                     ago
+                  </div>
+                )}
+              </div>
+
+              {/* ── Quality / size ───────────────────────────────────────── */}
+              <div
+                style={{
+                  padding: "12px 20px",
+                  borderBottom: "1px solid var(--border)",
+                }}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 8,
+                    marginBottom: 8,
+                  }}
+                >
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>
+                    Quality &amp; size
+                  </span>
+                  {formatsLoading && (
+                    <span style={{ fontSize: 11, color: "var(--text3)" }}>
+                      checking available versions…
+                    </span>
+                  )}
+                </div>
+                {formatsError ? (
+                  <div style={{ fontSize: 12, color: "var(--text3)" }}>
+                    Couldn't list sizes ({formatsError}). The download will use
+                    the best available quality.
+                  </div>
+                ) : (
+                  <select
+                    value={selectedFormat}
+                    onChange={(e) => setSelectedFormat(e.target.value)}
+                    disabled={formatsLoading}
+                    style={{
+                      width: "100%",
+                      padding: "8px 10px",
+                      background: "var(--surface2)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 8,
+                      color: "var(--text)",
+                      fontSize: 13,
+                    }}
+                  >
+                    <option value="">Auto — best available quality</option>
+                    {formatOptions.map((f) => (
+                      <option key={f.selector} value={f.selector}>
+                        {f.label}
+                        {f.sizeLabel ? ` · ~${f.sizeLabel}` : ""}
+                      </option>
+                    ))}
+                  </select>
+                )}
+                {selectedOption?.sizeLabel && (
+                  <div
+                    style={{ marginTop: 6, fontSize: 11, color: "var(--text3)" }}
+                  >
+                    Estimated size ~{selectedOption.sizeLabel} (final size can
+                    differ slightly).
                   </div>
                 )}
               </div>

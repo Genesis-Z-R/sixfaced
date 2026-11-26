@@ -13,15 +13,17 @@ function listen(handler) {
   });
 }
 
-test("sanitizeHeaders keeps only CDN-relevant headers", () => {
+test("sanitizeHeaders replays player headers but drops HTTP-stack ones", () => {
   const headers = sanitizeHeaders({
     Referer: "https://player.test/",
     Cookie: "a=b",
     "User-Agent": "UA",
     Origin: "https://player.test",
     Authorization: "Bearer x",
-    "X-Other": "nope",
+    "X-Playback-Token": "abc123",
     "Content-Length": "10",
+    Range: "bytes=0-10",
+    "Accept-Encoding": "gzip",
   });
   assert.deepStrictEqual(Object.keys(headers).sort(), [
     "authorization",
@@ -29,7 +31,31 @@ test("sanitizeHeaders keeps only CDN-relevant headers", () => {
     "origin",
     "referer",
     "user-agent",
+    "x-playback-token",
   ]);
+});
+
+test("probeStream replays custom auth headers and sends no Range", async () => {
+  let seen = null;
+  const { server, url } = await listen((req, res) => {
+    seen = req.headers;
+    if (req.headers["x-playback-token"] !== "abc123" || req.headers.range) {
+      res.writeHead(403).end("forbidden");
+      return;
+    }
+    res.writeHead(200, { "content-type": "application/vnd.apple.mpegurl" });
+    res.end("#EXTM3U\n#EXT-X-VERSION:3\n");
+  });
+  try {
+    const res = await probeStream(`${url}/index.m3u8`, {
+      "X-Playback-Token": "abc123",
+    });
+    assert.equal(res.ok, true, JSON.stringify(res));
+    assert.equal(res.kind, "hls");
+    assert.equal(seen.range, undefined);
+  } finally {
+    server.close();
+  }
 });
 
 test("probeStream accepts an HLS manifest when the captured Referer is sent", async () => {

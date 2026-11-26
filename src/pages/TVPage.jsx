@@ -719,7 +719,11 @@ export default function TVPage({
                 setResolvedPlayerUrl(r.playerUrl);
                 // Also expose raw url so download button can use it
                 setM3u8Url(res.url);
-                setStreamInfo({ url: res.url, headers: null, at: Date.now() });
+                setStreamInfo({
+                  url: res.url,
+                  headers: { referer: res.referer || "https://allmanga.to" },
+                  at: Date.now(),
+                });
               })
               .catch(() => {
                 if (mounted) setResolveError("Failed to start local player");

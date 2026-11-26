@@ -4,6 +4,7 @@
 
 const { app, ipcMain, shell, dialog, session } = require("electron");
 const { spawn } = require("child_process");
+const crypto = require("crypto");
 const path = require("path");
 const fs = require("fs");
 const https = require("https");
@@ -12,7 +13,7 @@ const os = require("os");
 const { writeJsonAtomic, readJsonWithBackup, keepBackup } = require("./fsSafe");
 const { isWithinAny, downloadRoots } = require("./pathSafety");
 const { assertPublicHttpUrl } = require("./netGuard");
-const { ensureTools } = require("./downloadTools");
+const { ensureTools, toolsStatus } = require("./downloadTools");
 const { probeStream, sanitizeHeaders } = require("./streamProbe");
 
 const LOG_PREFIX = "sixfaced_dl_";
@@ -89,6 +90,69 @@ function loadDownloads() {
     return entry;
   });
   sweepDownloaderLogs();
+}
+
+function humanSize(bytes) {
+  const n = Number(bytes) || 0;
+  if (n > 1e9) return (n / 1e9).toFixed(2) + " GB";
+  if (n > 1e6) return (n / 1e6).toFixed(1) + " MB";
+  if (n > 1e3) return (n / 1e3).toFixed(1) + " KB";
+  return n + " B";
+}
+
+/**
+ * Records a finished manga/manhwa chapter (a .cbz) in the same store the
+ * video downloads use, so it shows up on the Downloads page.
+ */
+function addChapterDownload({
+  title,
+  chapterLabel,
+  filePath,
+  size,
+  pageCount,
+  meta = {},
+}) {
+  const entry = {
+    id: crypto.randomUUID(),
+    kind: "chapter",
+    name: `${title} — ${chapterLabel}`,
+    m3u8Url: null,
+    downloadPath: path.dirname(filePath),
+    filePath,
+    status: "completed",
+    progress: 100,
+    speed: "",
+    size: humanSize(size),
+    pageCount: pageCount || 0,
+    totalFragments: 0,
+    completedFragments: 0,
+    lastMessage: "Saved",
+    startedAt: Date.now(),
+    completedAt: Date.now(),
+    mediaId: meta.mediaId || null,
+    mediaType: meta.mediaType || "manga",
+    season: meta.season ?? null,
+    episode: meta.episode ?? null,
+    posterPath: meta.posterPath || null,
+    tmdbId: meta.tmdbId || null,
+    subtitles: [],
+    subtitlePaths: [],
+    logPath: null,
+    headers: {},
+    capturedAt: Date.now(),
+  };
+  downloads = [entry, ...downloads];
+  saveDownloads();
+  sendProgress({
+    id: entry.id,
+    name: entry.name,
+    status: "completed",
+    progress: 100,
+    filePath,
+    size: entry.size,
+    lastMessage: "Saved",
+  });
+  return entry;
 }
 
 function saveDownloads() {
@@ -281,6 +345,152 @@ function logPathFor(id) {
   return path.join(dir, `${id}.log`);
 }
 
+// ── Format discovery (quality / size picker) ─────────────────────────────────
+
+const DEFAULT_UA =
+  "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+
+const formatCache = new Map(); // url → { at, value }
+const FORMAT_CACHE_TTL = 2 * 60 * 1000;
+
+function formatBytesLabel(bytes) {
+  if (!Number.isFinite(bytes) || bytes <= 0) return "";
+  if (bytes > 1e9) return (bytes / 1e9).toFixed(2) + " GB";
+  if (bytes > 1e6) return (bytes / 1e6).toFixed(1) + " MB";
+  if (bytes > 1e3) return (bytes / 1e3).toFixed(0) + " KB";
+  return bytes + " B";
+}
+
+/** Headers replayed to yt-dlp; shared by the format probe and the download. */
+function headerArgsFor(captured, url) {
+  const headers = captured || {};
+  const args = Object.entries(headers)
+    .filter(([name, value]) => name !== "user-agent" && value)
+    .flatMap(([name, value]) => ["--add-header", `${name}:${value}`]);
+  if (!headers.referer) {
+    try {
+      args.push("--add-header", `Referer:${new URL(url).origin}/`);
+    } catch {}
+  }
+  return args;
+}
+
+/** Only selectors we generate are accepted; never a flag-looking string. */
+function isSafeFormatSelector(selector) {
+  return (
+    typeof selector === "string" &&
+    selector.length > 0 &&
+    selector.length <= 120 &&
+    /^[A-Za-z0-9]/.test(selector) &&
+    /^[\w.:+\-\[\]<=> /]+$/.test(selector)
+  );
+}
+
+function runYtDlpJson(bin, args, timeoutMs = 30_000) {
+  return new Promise((resolve, reject) => {
+    let proc;
+    try {
+      proc = spawn(bin, args, { stdio: ["ignore", "pipe", "pipe"] });
+    } catch (error) {
+      reject(error);
+      return;
+    }
+    let out = "";
+    let err = "";
+    const timer = setTimeout(() => {
+      try {
+        proc.kill("SIGKILL");
+      } catch {}
+      reject(new Error("Timed out listing formats"));
+    }, timeoutMs);
+    proc.stdout.on("data", (chunk) => {
+      out += chunk.toString();
+    });
+    proc.stderr.on("data", (chunk) => {
+      err += chunk.toString();
+    });
+    proc.on("error", (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    proc.on("close", (code) => {
+      clearTimeout(timer);
+      if (code !== 0) {
+        const last = err.trim().split(/\r?\n/).filter(Boolean).pop() || "";
+        reject(new Error((last || `Format probe failed (exit ${code})`).slice(0, 300)));
+        return;
+      }
+      try {
+        resolve(JSON.parse(out));
+      } catch {
+        reject(new Error("Could not read the stream's format list"));
+      }
+    });
+  });
+}
+
+function normaliseFormats(info) {
+  const duration = Number(info?.duration) || 0;
+  const best = new Map();
+  for (const f of info?.formats || []) {
+    if (!f || f.vcodec === "none") continue;
+    const height = Number(f.height) || 0;
+    const muxed = Boolean(f.acodec) && f.acodec !== "none";
+    const bytes =
+      Number(f.filesize) ||
+      Number(f.filesize_approx) ||
+      (Number(f.tbr) > 0 && duration > 0
+        ? Math.round(((Number(f.tbr) * 1000) / 8) * duration)
+        : 0);
+    const selector = muxed
+      ? f.format_id
+      : `${f.format_id}+ba/b${height ? `[height<=${height}]` : ""}`;
+    if (!isSafeFormatSelector(selector)) continue;
+    const option = {
+      height,
+      label: height ? `${height}p` : f.format_note || f.format_id,
+      bytes,
+      sizeLabel: formatBytesLabel(bytes),
+      selector,
+      ext: f.ext || "",
+    };
+    const key = height || f.format_id;
+    const prev = best.get(key);
+    if (!prev || (option.bytes || 0) > (prev.bytes || 0)) best.set(key, option);
+  }
+  return [...best.values()]
+    .sort((a, b) => (b.height || 0) - (a.height || 0))
+    .slice(0, 8);
+}
+
+async function listFormats(url, rawHeaders) {
+  const cached = formatCache.get(url);
+  if (cached && Date.now() - cached.at < FORMAT_CACHE_TTL) return cached.value;
+
+  const tools = await ensureTools();
+  const captured = sanitizeHeaders(rawHeaders);
+  const info = await runYtDlpJson(tools.ytDlp, [
+    "--no-warnings",
+    "--no-playlist",
+    "--socket-timeout",
+    "15",
+    "--user-agent",
+    captured["user-agent"] || DEFAULT_UA,
+    ...headerArgsFor(captured, url),
+    "-J",
+    url,
+  ]);
+
+  const value = {
+    title: info?.title || "",
+    duration: Number(info?.duration) || 0,
+    options: normaliseFormats(info),
+  };
+  if (formatCache.size > 50) formatCache.clear();
+  formatCache.set(url, { at: Date.now(), value });
+  return value;
+}
+
 async function startJob(entry) {
   const id = entry.id;
   const { name, m3u8Url, downloadPath } = entry;
@@ -367,16 +577,8 @@ async function startJob(entry) {
       .replace(/\s+/g, " ")
       .trim() || "download";
   const captured = entry.headers || {};
-  let referer = captured.referer || "https://www.google.com/";
-  try {
-    if (!captured.referer) referer = new URL(m3u8Url).origin + "/";
-  } catch {}
-  const origin = captured.origin || null;
-  const cookie = captured.cookie || null;
-  const authorization = captured.authorization || null;
-  const userAgent =
-    captured["user-agent"] ||
-    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36";
+  const userAgent = captured["user-agent"] || DEFAULT_UA;
+  const headerArgs = headerArgsFor(captured, m3u8Url);
 
   const args = [
     "--no-playlist",
@@ -400,12 +602,8 @@ async function startJob(entry) {
     "--merge-output-format",
     "mp4",
     "-f",
-    "bv*+ba/b",
-    "--add-header",
-    `Referer:${referer}`,
-    ...(origin ? ["--add-header", `Origin:${origin}`] : []),
-    ...(cookie ? ["--add-header", `Cookie:${cookie}`] : []),
-    ...(authorization ? ["--add-header", `Authorization:${authorization}`] : []),
+    entry.formatSelector || "bv*+ba/b",
+    ...headerArgs,
     "--user-agent",
     userAgent,
     "-o",
@@ -676,7 +874,20 @@ function register(getMainWindow) {
     exists: true,
     token: "managed",
     managed: true,
+    tools: toolsStatus(),
   }));
+
+  // ── quality / size picker ─────────────────────────────────────────────────
+  ipcMain.handle("get-download-formats", async (_, payload = {}) => {
+    try {
+      const { m3u8Url, headers } = payload;
+      if (!m3u8Url) return { ok: false, error: "Missing stream URL" };
+      const value = await listFormats(m3u8Url, headers);
+      return { ok: true, ...value };
+    } catch (e) {
+      return { ok: false, error: e.message };
+    }
+  });
 
   ipcMain.handle("get-default-download-path", () => {
     const dir = path.join(app.getPath("downloads"), "Sixfaced");
@@ -703,6 +914,8 @@ function register(getMainWindow) {
         headers,
         capturedAt,
         pageUrl,
+        formatSelector,
+        quality,
       } = payload;
 
       if (!m3u8Url || !downloadPath) {
@@ -763,6 +976,12 @@ function register(getMainWindow) {
         subtitlePaths: [],
         logPath: null,
         headers: safeHeaders,
+        // An explicit quality pick from the modal; null means "best".
+        formatSelector:
+          isSafeFormatSelector(formatSelector) && formatSelector
+            ? formatSelector
+            : null,
+        quality: typeof quality === "string" ? quality.slice(0, 24) : null,
         capturedAt: capturedAt || Date.now(),
         pageUrl: pageUrl || null,
         httpStatus: probe.status,
@@ -1153,6 +1372,7 @@ module.exports = {
   loadDownloads,
   saveDownloads,
   killAllDownloads,
+  addChapterDownload,
   getDownloads: () => downloads,
   interruptActiveForQuit,
 };

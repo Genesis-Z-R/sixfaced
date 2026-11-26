@@ -45,6 +45,7 @@ const subtitlesIpc = require("./src/ipc/subtitles");
 const allmangaIpc = require("./src/ipc/allmanga");
 const mangaIpc = require("./src/ipc/manga");
 const manhwaIpc = require("./src/ipc/manhwa");
+const chapterDownloadIpc = require("./src/ipc/chapterDownload");
 const playerIpc = require("./src/ipc/player");
 
 // -- Ad/tracker block list -----------------------------------------------------
@@ -187,13 +188,17 @@ function setupSession(playerSession, trailerSession) {
     "*://*/*.m3u8",
     "*://*/*.mpd*",
     "*://*/*.mpd",
+    // Manifests whose URL only mentions the format in the query string
+    // (e.g. ?format=m3u8) still need their request headers captured.
+    "*://*/*m3u8*",
+    "*://*/*mpd*",
   ];
   const { sanitizeHeaders } = require("./src/ipc/streamProbe");
   playerSession.webRequest.onBeforeSendHeaders(
     { urls: STREAM_URLS },
     (details, callback) => {
       const url = details.url || "";
-      if (url.includes(".m3u8") || url.includes(".mpd")) {
+      if (/\.m3u8|\.mpd|format=m3u8|type=m3u8/i.test(url)) {
         let pageUrl = null;
         try {
           if (details.webContentsId) {
@@ -705,10 +710,31 @@ subtitlesIpc.register({
 allmangaIpc.register();
 mangaIpc.register();
 manhwaIpc.register();
+chapterDownloadIpc.register({
+  addChapterDownload: downloadsIpc.addChapterDownload,
+});
 playerIpc.register(getMainWindow, {
   writeSecretMigration: storageIpc.writeSecretMigration,
 });
 blockStats.init(getMainWindow);
+
+// Manifests whose URL is built in page JS never hit the webRequest patterns.
+// player-preload reports them here so the download button still appears.
+ipcMain.on("player-media-url", (_, url) => {
+  if (typeof url !== "string" || !/^https?:\/\//i.test(url)) return;
+  if (!/\.m3u8|\.mpd|format=m3u8|type=m3u8/i.test(url)) return;
+  const mw = getMainWindow();
+  if (!mw || mw.isDestroyed()) return;
+  if (!mw.webContents || mw.webContents.isDestroyed()) return;
+  mw.webContents.send("stream-found", {
+    url,
+    headers: {},
+    pageUrl: null,
+    at: Date.now(),
+    kind: url.includes(".mpd") ? "dash" : "hls",
+  });
+  mw.webContents.send("m3u8-found", url);
+});
 
 // Registered once: re-creating the window must not stack close handlers.
 ipcMain.on("close-response", (_, confirmed) => {

@@ -147,7 +147,7 @@ function download(url, onProgress) {
         reject(new Error("Downloads must use HTTPS"));
         return;
       }
-      https
+      const req = https
         .get(
           target,
           { headers: { "User-Agent": "Sixfaced/1.0", Accept: "application/octet-stream" } },
@@ -179,8 +179,12 @@ function download(url, onProgress) {
             res.on("end", () => resolve({ buffer: Buffer.concat(chunks), total }));
             res.on("error", reject);
           },
-        )
-        .on("error", reject);
+        );
+      // A stalled GitHub connection used to pin a concurrency slot forever.
+      req.setTimeout(45_000, () =>
+        req.destroy(new Error("Timed out fetching the managed tool")),
+      );
+      req.on("error", reject);
     };
     request(url);
   });
@@ -194,8 +198,12 @@ async function ensureTool(name, onProgress) {
     throw new Error(`No ${name} build for ${key}`);
   }
 
-  // 1. A working system installation is preferred.
-  const system = systemTool(name === "ytDlp" ? (process.platform === "win32" ? "yt-dlp.exe" : "yt-dlp") : (process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg"));
+  // 1. A working system installation is preferred. (Use this tool's own
+  // name — the old code looked up "ffmpeg" for ffprobe too.)
+  const systemName = name === "ytDlp" ? "yt-dlp" : name;
+  const system = systemTool(
+    process.platform === "win32" ? `${systemName}.exe` : systemName,
+  );
   if (system) {
     return { path: system, source: "system", version: "system" };
   }

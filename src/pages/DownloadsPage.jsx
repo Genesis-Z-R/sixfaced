@@ -720,6 +720,7 @@ const ActiveCard = memo(function ActiveCard({ dl, onDelete, onCancel, onSelect }
           </div>
           <div className="dl-card__meta">
             {dl.speed && <span>↓ {dl.speed}</span>}
+            {dl.quality && <span>{dl.quality}</span>}
             {dl.size && <span>{dl.size}</span>}
             {dl.totalFragments > 0 && (
               <span>
@@ -955,6 +956,10 @@ const LocalFileCard = memo(function LocalFileCard({
 
   const handleWatch = useCallback(() => {
     if (!dl.filePath) return;
+    if (dl.kind === "chapter") {
+      window.electron?.showInFolder(dl.filePath);
+      return;
+    }
     // Update watch history when playing from downloads
     if (onHistory && dl.tmdbId && dl.mediaType) {
       onHistory({
@@ -1035,6 +1040,8 @@ const LocalFileCard = memo(function LocalFileCard({
               <span className="dl-status dl-status--local">Local</span>
             )}
             {dl.completedAt && <span>{timeAgo(dl.completedAt)}</span>}
+            {dl.quality && <span>{dl.quality}</span>}
+            {dl.pageCount > 0 && <span>{dl.pageCount} pages</span>}
             {dl.size && <span>{dl.size}</span>}
             {/* Subtitle info, always visible, clickable to open downloader */}
             {(() => {
@@ -1359,10 +1366,19 @@ const LocalFileCard = memo(function LocalFileCard({
               className="btn btn-primary dl-btn--sm-primary"
               onClick={handleWatch}
               title={
-                savedSecs > 0 ? `Resume at ${secsToHms(savedSecs)}` : "Watch"
+                dl.kind === "chapter"
+                  ? "Reveal the saved .cbz"
+                  : savedSecs > 0
+                    ? `Resume at ${secsToHms(savedSecs)}`
+                    : "Watch"
               }
             >
-              <PlayIcon /> {savedSecs > 0 ? "Resume" : "Watch"}
+              <PlayIcon />{" "}
+              {dl.kind === "chapter"
+                ? "Open"
+                : savedSecs > 0
+                  ? "Resume"
+                  : "Watch"}
             </button>
           )}
           {dl.filePath && (

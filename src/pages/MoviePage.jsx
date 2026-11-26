@@ -419,7 +419,11 @@ export default function MoviePage({
                 resolvedPlayerUrlRef.current = r.playerUrl;
                 setResolvedPlayerUrl(r.playerUrl);
                 setM3u8Url(res.url);
-                setStreamInfo({ url: res.url, headers: null, at: Date.now() });
+                setStreamInfo({
+                  url: res.url,
+                  headers: { referer: res.referer || "https://allmanga.to" },
+                  at: Date.now(),
+                });
               })
               .catch(() => {
                 if (mounted) setResolveError("Failed to start local player");
