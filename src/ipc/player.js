@@ -328,6 +328,83 @@ function register(getMainWindow, { writeSecretMigration }) {
     }
   }
 
+
+/** Mounts the DMG, checks the bundle, and swaps it into /Applications. */
+async function installMacUpdate(dmgPath) {
+  const mountPoint = path.join(
+    os.tmpdir(),
+    `sixfaced-update-mnt-${crypto.randomUUID()}`,
+  );
+  try {
+    fs.mkdirSync(mountPoint, { recursive: true });
+    const attach = spawnSync(
+      "hdiutil",
+      [
+        "attach",
+        dmgPath,
+        "-nobrowse",
+        "-noverify",
+        "-readonly",
+        "-mountpoint",
+        mountPoint,
+      ],
+      { encoding: "utf8" },
+    );
+    if (attach.status !== 0) {
+      return {
+        ok: false,
+        error: `Could not mount the update: ${(attach.stderr || "").trim().slice(0, 200) || "hdiutil failed"}`,
+      };
+    }
+
+    const appName = fs
+      .readdirSync(mountPoint)
+      .find((name) => name.endsWith(".app"));
+    if (!appName) {
+      spawnSync("hdiutil", ["detach", mountPoint, "-quiet"], { encoding: "utf8" });
+      return { ok: false, error: "The update image did not contain an app" };
+    }
+    const sourceApp = path.join(mountPoint, appName);
+    const version = spawnSync(
+      "/usr/bin/defaults",
+      ["read", path.join(sourceApp, "Contents", "Info"), "CFBundleShortVersionString"],
+      { encoding: "utf8" },
+    ).stdout.trim();
+    if (!version) {
+      spawnSync("hdiutil", ["detach", mountPoint, "-quiet"], { encoding: "utf8" });
+      return { ok: false, error: "The update image has no app version" };
+    }
+
+    const targetApp = path.join("/Applications", "Sixfaced.app");
+    const staging = `${targetApp}.update-${crypto.randomUUID().slice(0, 8)}`;
+    const scriptPath = path.join(os.tmpdir(), `sixfaced-update-${crypto.randomUUID()}.sh`);
+    const script = `#!/bin/sh
+sleep 2
+if /usr/bin/ditto "${sourceApp}" "${staging}"; then
+  /bin/rm -rf "${targetApp}"
+  if /bin/mv "${staging}" "${targetApp}"; then
+    /usr/bin/hdiutil detach "${mountPoint}" -quiet
+    /bin/rm -f "${dmgPath}"
+    /usr/bin/open "${targetApp}"
+    exit 0
+  fi
+fi
+/bin/rm -rf "${staging}" 2>/dev/null
+/usr/bin/open "${mountPoint}"
+/usr/bin/open "${dmgPath}"
+exit 1
+`;
+    fs.writeFileSync(scriptPath, script, { mode: 0o755 });
+    spawn("sh", [scriptPath], { detached: true, stdio: "ignore" }).unref();
+    return { ok: true, stagedVersion: version };
+  } catch (error) {
+    try {
+      spawnSync("hdiutil", ["detach", mountPoint, "-quiet"], { encoding: "utf8" });
+    } catch {}
+    return { ok: false, error: error.message };
+  }
+}
+
   ipcMain.handle("download-and-install-update", async (_, { url, format }) => {
     if (_updateInFlight) {
       return { ok: false, error: "An update is already downloading" };
@@ -589,14 +666,32 @@ function register(getMainWindow, { writeSecretMigration }) {
         }
       } else if (format === "exe") {
         sendInstalling();
-        spawn(destPath, [], { detached: true, stdio: "ignore" }).unref();
-        app.exit(0);
+        // NSIS: run the downloaded installer, quit so it can replace files,
+        // and let its "run app" step bring Sixfaced back.
+        const child = spawn(destPath, [], { detached: true, stdio: "ignore" });
+        child.on("error", (err) => {
+          try {
+            shell.openPath(destPath);
+          } catch {}
+          const mw = getMainWindow();
+          if (mw && !mw.isDestroyed()) {
+            mw.webContents.send("update-progress", {
+              percent: 100,
+              label: `Could not start the installer (${err?.message || "unknown"}). The file was opened for you.`,
+            });
+          }
+        });
+        child.unref();
+        setTimeout(() => app.exit(0), 400);
       } else if (format === "dmg") {
+        // macOS: mount, verify the bundle, then swap it in from a detached
+        // script after this process exits. No more "Launching installer…"
+        // dead-end — the app reopens itself, or the DMG stays mounted for a
+        // manual drag if /Applications is not writable.
         sendInstalling();
-        spawn("hdiutil", ["attach", destPath], {
-          detached: true,
-          stdio: "ignore",
-        }).unref();
+        const installed = await installMacUpdate(destPath);
+        if (!installed.ok) return installed;
+        setTimeout(() => app.exit(0), 300);
       }
 
       return { ok: true };

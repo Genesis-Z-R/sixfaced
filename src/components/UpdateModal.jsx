@@ -448,6 +448,7 @@ export default function UpdateModal({
   const [progressLabel, setProgressLabel] = useState("");
   const [errorMsg, setErrorMsg] = useState("");
   const cancelRef = useRef(false);
+  const installTimerRef = useRef(null);
 
   // Detect install format on mount
   useEffect(() => {
@@ -490,7 +491,15 @@ export default function UpdateModal({
       if (cancelRef.current) return;
       if (!result.ok) throw new Error(result.error || "Update failed");
       setPhase("installing");
-      setProgressLabel("Launching installer…");
+      setProgressLabel("Installing — Sixfaced will restart…");
+      // Safety net: on macOS the app replaces itself and quits. If that did
+      // not happen (e.g. /Applications is not writable), never leave the user
+      // staring at an endless spinner.
+      if (installTimerRef.current) clearTimeout(installTimerRef.current);
+      installTimerRef.current = setTimeout(() => {
+        setPhase("manual");
+        setProgressLabel("");
+      }, 20000);
     } catch (e) {
       if (cancelRef.current) return;
       setPhase("error");
@@ -499,6 +508,7 @@ export default function UpdateModal({
   };
 
   const handleCancel = () => {
+    if (installTimerRef.current) clearTimeout(installTimerRef.current);
     if (phase === "downloading") {
       cancelRef.current = true;
       window.electron?.cancelUpdate?.();
@@ -781,6 +791,27 @@ export default function UpdateModal({
                   }}
                 />
               </div>
+            </div>
+          )}
+
+          {/* Fallback when the swap did not happen automatically */}
+          {phase === "manual" && (
+            <div
+              style={{
+                fontSize: 12.5,
+                lineHeight: 1.6,
+                color: "var(--text2)",
+                background: "var(--surface2)",
+                border: "1px solid var(--border)",
+                borderRadius: 10,
+                padding: "10px 12px",
+                marginBottom: 12,
+              }}
+            >
+              The update was downloaded but the app could not replace itself
+              (usually a permissions issue). The Sixfaced disk image is open —
+              drag <strong>Sixfaced</strong> onto <strong>Applications</strong>{" "}
+              and choose <em>Replace</em>.
             </div>
           )}
 
