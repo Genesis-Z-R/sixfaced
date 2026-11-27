@@ -194,13 +194,16 @@ function setupSession(playerSession, trailerSession) {
     // (e.g. ?format=m3u8) still need their request headers captured.
     "*://*/*m3u8*",
     "*://*/*mpd*",
+    // Miruro proxies its playlists: the URL carries no extension.
+    "*://*.keeply.top/*",
+    "*://*.strm.cx/*",
   ];
   const { sanitizeHeaders } = require("./src/ipc/streamProbe");
   playerSession.webRequest.onBeforeSendHeaders(
     { urls: STREAM_URLS },
     (details, callback) => {
       const url = details.url || "";
-      if (/\.m3u8|\.mpd|format=m3u8|type=m3u8/i.test(url)) {
+      if (/\.m3u8|\.mpd|format=m3u8|type=m3u8|keeply\.top|strm\.cx/i.test(url)) {
         let pageUrl = null;
         try {
           if (details.webContentsId) {
