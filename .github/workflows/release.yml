@@ -48,11 +48,13 @@ jobs:
           hdiutil create -volname "Sixfaced" -srcfolder release/dmg \
             -ov -format UDZO "release/Sixfaced-${VERSION}-universal.dmg"
 
-      - uses: actions/upload-artifact@v4
+      - name: Publish macOS asset
+        uses: softprops/action-gh-release@v2
         with:
-          name: sixfaced-macos
-          path: release/*.dmg
-          if-no-files-found: error
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: Sixfaced ${{ github.event.inputs.tag || github.ref_name }}
+          generate_release_notes: true
+          files: release/*.dmg
 
   windows:
     name: Windows (NSIS installer)
@@ -70,37 +72,10 @@ jobs:
       - name: Build Windows installer
         run: npm run dist:win
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: sixfaced-windows
-          path: dist/*.exe
-          if-no-files-found: error
-
-  release:
-    name: Publish release
-    needs: [macos, windows]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          pattern: sixfaced-*
-          path: artifacts
-          merge-multiple: true
-
-      - name: List artifacts
-        run: ls -lh artifacts
-
-      - name: Create release
+      - name: Publish Windows asset
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           name: Sixfaced ${{ github.event.inputs.tag || github.ref_name }}
           generate_release_notes: true
-          body: |
-            Sixfaced **${{ github.event.inputs.tag || github.ref_name }}** — macOS (universal) and Windows (x64) builds.
-
-            - macOS: open the `.dmg`, drag Sixfaced to Applications. The build is **ad-hoc signed, not notarised** — first launch may need right-click → Open.
-            - Windows: run the `Setup` `.exe`. The build is **unsigned**, so SmartScreen may warn.
-
-            Linux packages can be built locally with `npm run dist:linux`.
-          files: artifacts/**
+          files: dist/*.exe
