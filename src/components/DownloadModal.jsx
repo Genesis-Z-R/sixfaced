@@ -7,6 +7,7 @@ import {
   secureStorage,
   isElectron,
 } from "../utils/storage";
+import { PLAYER_SOURCES } from "../utils/api";
 import {
   SUBTITLE_LANGUAGES,
   LANG_LABEL,
@@ -438,6 +439,9 @@ export default function DownloadModal({
   const [formatsLoading, setFormatsLoading] = useState(false);
   const [formatsError, setFormatsError] = useState(null);
   const [selectedFormat, setSelectedFormat] = useState("");
+  // Source health test (runs every embed in a hidden window in-app)
+  const [srcTesting, setSrcTesting] = useState(false);
+  const [srcTest, setSrcTest] = useState(null);
 
   const canSearchOS = isElectron && !!tmdbId;
 
@@ -561,6 +565,39 @@ export default function DownloadModal({
   const selectedOption = formatOptions.find(
     (f) => f.selector === selectedFormat,
   );
+
+  const runSourceTest = async () => {
+    if (!isElectron || !window.electron?.testVideoSources || !tmdbId) return;
+    const sources = PLAYER_SOURCES.filter((s) => !s.async && s.id !== "allmanga").map(
+      (s) => ({
+        id: s.id,
+        label: s.label,
+        url:
+          mediaType === "tv"
+            ? s.tvUrl(tmdbId, season || 1, episode || 1)
+            : s.movieUrl(tmdbId),
+      }),
+    );
+    setSrcTesting(true);
+    setSrcTest(null);
+    try {
+      const res = await window.electron.testVideoSources({ sources });
+      setSrcTest(res);
+    } catch (e) {
+      setSrcTest({ ok: false, error: e.message });
+    } finally {
+      setSrcTesting(false);
+    }
+  };
+
+  const sourceVerdict = (r) => {
+    if (r.probeOk) return { ok: true, text: "stream captured + reachable" };
+    if (r.manifests?.length) return { ok: false, text: "manifest found but not fetchable" };
+    if (r.played?.readyState >= 2) return { ok: false, text: "plays in page (no manifest to download)" };
+    if (r.played?.error) return { ok: false, text: `player error ${r.played.error}` };
+    if (r.pageStatus && r.pageStatus >= 400) return { ok: false, text: `page HTTP ${r.pageStatus}` };
+    return { ok: false, text: "no stream" };
+  };
 
   const pickBinaryFolder = async () => {
     const folder = await window.electron.pickFolder();
@@ -860,6 +897,65 @@ export default function DownloadModal({
                   >
                     Estimated size ~{selectedOption.sizeLabel} (final size can
                     differ slightly).
+                  </div>
+                )}
+              </div>
+
+              {/* ── Source health ────────────────────────────────────────── */}
+              <div
+                style={{
+                  padding: "12px 20px",
+                  borderBottom: "1px solid var(--border)",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>
+                    Source check
+                  </span>
+                  <div style={{ flex: 1 }} />
+                  <button
+                    className="btn btn-ghost"
+                    style={{ padding: "4px 10px", fontSize: 12 }}
+                    onClick={runSourceTest}
+                    disabled={srcTesting || !tmdbId}
+                  >
+                    {srcTesting ? "Testing…" : "Test all sources"}
+                  </button>
+                </div>
+                {srcTesting && (
+                  <div style={{ marginTop: 8, fontSize: 11, color: "var(--text3)" }}>
+                    Opening each source in a hidden window — takes about a minute.
+                  </div>
+                )}
+                {srcTest && !srcTest.ok && (
+                  <div className="download-error" style={{ marginTop: 8 }}>
+                    {srcTest.error}
+                  </div>
+                )}
+                {srcTest?.ok && (
+                  <div
+                    style={{
+                      display: "flex",
+                      flexDirection: "column",
+                      gap: 6,
+                      marginTop: 8,
+                    }}
+                  >
+                    {srcTest.results.map((r) => {
+                      const v = sourceVerdict(r);
+                      return (
+                        <div
+                          key={r.id}
+                          style={{ display: "flex", gap: 8, fontSize: 12, alignItems: "baseline" }}
+                        >
+                          <span style={{ color: v.ok ? "#3fb950" : "var(--red)", width: 14 }}>
+                            {v.ok ? "✓" : "✗"}
+                          </span>
+                          <span style={{ fontWeight: 600, minWidth: 96 }}>{r.label}</span>
+                          <span style={{ color: "var(--text3)" }}>{v.text}</span>
+                        </div>
+                      );
+                    })}
                   </div>
                 )}
               </div>
