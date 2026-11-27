@@ -174,23 +174,6 @@ export const PLAYER_SOURCES = [
       `https://embed.vidrift.net/embed/tv/${id}/${season}/${ep}`,
   },
   {
-    id: "peachify",
-    label: "Peachify",
-    tag: null,
-    note: "Movies only",
-    supportsProgress: true,
-    colorParam: "accent", // hex without # → e.g. "e50914"
-    langParam: "sub",
-    params: {
-      autoPlay: "true",
-      pip: "hide",
-      cast: "hide",
-    },
-    movieUrl: (id) => `https://peachify.top/embed/movie/${id}`,
-    tvUrl: (id, season, ep) =>
-      `https://peachify.top/embed/tv/${id}/${season}/${ep}`,
-  },
-  {
     id: "2embed",
     label: "2Embed",
     tag: null,
@@ -217,17 +200,6 @@ export const PLAYER_SOURCES = [
     movieUrl: (id) => `https://vidsrc.pm/embed/movie/${id}`,
     tvUrl: (id, season, ep) =>
       `https://vidsrc.pm/embed/tv/${id}/${season}/${ep}`,
-  },
-  {
-    id: "allmanga",
-    label: "AllManga",
-    tag: "ANIME",
-    note: null,
-    supportsProgress: true,
-    async: true,
-    params: {},
-    movieUrl: (_id) => "https://allmanga.to",
-    tvUrl: (_id, _season, _ep) => "https://allmanga.to",
   },
 ];
 export const getSourceUrl = (
@@ -295,7 +267,7 @@ export const NEEDS_INTERCEPT = ["vidsrc"];
 // Anime fallback order. AllManga's upstream API now rejects episode queries
 // (AA_CRYPTO_MISSING), and vidsrc is unreliable, so anime falls back to the
 // embed that actually serves a capturable HLS stream (vidfast) first.
-const ANIME_FALLBACK_ORDER = ["vidfast", "vidrift", "2embed", "vidsrc"];
+const ANIME_FALLBACK_ORDER = ["vidsrc_pm", "vidfast", "vidrift", "vidsrc", "2embed"];
 
 export const getAnimeFallbackSource = (currentId) => {
   const usable = ANIME_FALLBACK_ORDER.filter(
@@ -540,7 +512,7 @@ export const isAnimeContent = (item, details) => {
 };
 
 // Default sources
-export const ANIME_DEFAULT_SOURCE = "vidfast";
+export const ANIME_DEFAULT_SOURCE = "vidsrc_pm";
 export const NON_ANIME_DEFAULT_SOURCE = "vidsrc";
 
 // ── Episode Group fetch (localStorage + in-memory cache, 7-day TTL) ─────────

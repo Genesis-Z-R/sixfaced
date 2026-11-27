@@ -151,6 +151,24 @@ export default function MoviePage({
   const [playerFullscreen, setPlayerFullscreen] = useState(false);
   // pipOpen=true: main webview shows about:blank, pop-out window has the real player
   const [pipOpen, setPipOpen] = useState(false);
+  // 2embed only plays when framed, so it is loaded through a local wrapper.
+  const [embedWrapUrl, setEmbedWrapUrl] = useState(null);
+  useEffect(() => {
+    if (playerSource !== "2embed" || !window.electron?.getEmbedWrapper) {
+      setEmbedWrapUrl(null);
+      return;
+    }
+    let mounted = true;
+    window.electron
+      .getEmbedWrapper(getSourceUrl("2embed", "movie", item.id))
+      .then((r) => {
+        if (mounted && r?.ok) setEmbedWrapUrl(r.url);
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, [playerSource, item.id]);
   const pipUrlRef = useRef(null); // URL to restore when pop-out closes
   const pipWebContentsIdRef = useRef(null); // cached WebContents ID of the pop-out window
 
@@ -1213,16 +1231,18 @@ export default function MoviePage({
                   ? "about:blank"
                   : sourceIsAsync(playerSource)
                     ? resolvedPlayerUrl || "about:blank"
-                    : getSourceUrl(
-                        playerSource,
-                        "movie",
-                        item.id,
-                        null,
-                        null,
-                        {},
-                        playerAccentColor,
-                        playerSubLang,
-                      )
+                    : playerSource === "2embed" && embedWrapUrl
+                      ? embedWrapUrl
+                      : getSourceUrl(
+                          playerSource,
+                          "movie",
+                          item.id,
+                          null,
+                          null,
+                          {},
+                          playerAccentColor,
+                          playerSubLang,
+                        )
               }
               partition="persist:player"
               allowpopups="false"

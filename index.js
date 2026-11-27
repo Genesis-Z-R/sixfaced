@@ -47,6 +47,7 @@ const mangaIpc = require("./src/ipc/manga");
 const manhwaIpc = require("./src/ipc/manhwa");
 const chapterDownloadIpc = require("./src/ipc/chapterDownload");
 const sourceTesterIpc = require("./src/ipc/sourceTester");
+const embedWrapperIpc = require("./src/ipc/embedWrapper");
 const playerIpc = require("./src/ipc/player");
 
 // -- Ad/tracker block list -----------------------------------------------------
@@ -712,6 +713,7 @@ allmangaIpc.register();
 mangaIpc.register();
 manhwaIpc.register();
 sourceTesterIpc.register();
+embedWrapperIpc.register();
 chapterDownloadIpc.register({
   addChapterDownload: downloadsIpc.addChapterDownload,
 });

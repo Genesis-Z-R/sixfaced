@@ -381,6 +381,32 @@ export default function TVPage({
   const [webviewLoading, setWebviewLoading] = useState(false);
   const [playerFullscreen, setPlayerFullscreen] = useState(false);
   const [pipOpen, setPipOpen] = useState(false);
+  // 2embed only plays when framed, so it is loaded through a local wrapper.
+  const [embedWrapUrl, setEmbedWrapUrl] = useState(null);
+  useEffect(() => {
+    if (playerSource !== "2embed" || !window.electron?.getEmbedWrapper || !webviewEp) {
+      setEmbedWrapUrl(null);
+      return;
+    }
+    let mounted = true;
+    window.electron
+      .getEmbedWrapper(
+        getSourceUrl(
+          "2embed",
+          "tv",
+          item.id,
+          selectedSeason,
+          webviewEp.episode_number,
+        ),
+      )
+      .then((r) => {
+        if (mounted && r?.ok) setEmbedWrapUrl(r.url);
+      })
+      .catch(() => {});
+    return () => {
+      mounted = false;
+    };
+  }, [playerSource, item.id, selectedSeason, webviewEp]);
   const pipUrlRef = useRef(null);
   const pipWebContentsIdRef = useRef(null); // cached WebContents ID of the pop-out window
   const [menuPos, setMenuPos] = useState(null);
@@ -2423,16 +2449,18 @@ export default function TVPage({
                       ? "about:blank"
                       : isAsync
                         ? resolvedPlayerUrl || "about:blank"
-                        : getSourceUrl(
-                            playerSource,
-                            "tv",
-                            item.id,
-                            webviewPlayerEp.season,
-                            webviewPlayerEp.episode,
-                            {},
-                            playerAccentColor,
-                            playerSubLang,
-                          )
+                        : playerSource === "2embed" && embedWrapUrl
+                          ? embedWrapUrl
+                          : getSourceUrl(
+                              playerSource,
+                              "tv",
+                              item.id,
+                              webviewPlayerEp.season,
+                              webviewPlayerEp.episode,
+                              {},
+                              playerAccentColor,
+                              playerSubLang,
+                            )
                   }
                   partition="persist:player"
                   allowpopups="false"

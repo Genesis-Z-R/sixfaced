@@ -44,6 +44,7 @@ contextBridge.exposeInMainWorld("electron", {
     ipcRenderer.invoke("get-download-formats", args),
   testVideoSources: (args) =>
     ipcRenderer.invoke("test-video-sources", args),
+  getEmbedWrapper: (url) => ipcRenderer.invoke("get-embed-wrapper", { url }),
   deleteDownload: (args) => ipcRenderer.invoke("delete-download", args),
   showInFolder: (path) => ipcRenderer.invoke("show-in-folder", path),
   fileExists: (path) => ipcRenderer.invoke("file-exists", path),
