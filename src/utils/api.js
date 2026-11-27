@@ -292,6 +292,18 @@ export const getNextNonAsyncSource = (currentId) => {
 // Sources that require a transparent webRequest intercept to load properly
 export const NEEDS_INTERCEPT = ["vidsrc"];
 
+// Anime fallback order. AllManga's upstream API now rejects episode queries
+// (AA_CRYPTO_MISSING), and vidsrc is unreliable, so anime falls back to the
+// embed that actually serves a capturable HLS stream (vidfast) first.
+const ANIME_FALLBACK_ORDER = ["vidfast", "vidrift", "2embed", "vidsrc"];
+
+export const getAnimeFallbackSource = (currentId) => {
+  const usable = ANIME_FALLBACK_ORDER.filter(
+    (id) => id !== currentId && PLAYER_SOURCES.some((s) => s.id === id && !s.async),
+  );
+  return usable[0] || getNextNonAsyncSource(currentId);
+};
+
 // ── AniList API (anime metadata) ──────────────────────────────────────────────
 const ANILIST_API = "https://graphql.anilist.co";
 
@@ -528,7 +540,7 @@ export const isAnimeContent = (item, details) => {
 };
 
 // Default sources
-export const ANIME_DEFAULT_SOURCE = "vidrift";
+export const ANIME_DEFAULT_SOURCE = "vidfast";
 export const NON_ANIME_DEFAULT_SOURCE = "vidsrc";
 
 // ── Episode Group fetch (localStorage + in-memory cache, 7-day TTL) ─────────

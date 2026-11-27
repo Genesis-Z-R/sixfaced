@@ -29,6 +29,7 @@ import {
   NON_ANIME_DEFAULT_SOURCE,
   NEEDS_INTERCEPT,
   getNextNonAsyncSource,
+  getAnimeFallbackSource,
 } from "../utils/api";
 import {
   BookmarkIcon,
@@ -735,7 +736,7 @@ export default function TVPage({
         } else {
           // AllManga doesn't have this episode → switch to the next source
           // automatically and remember the choice for next time.
-          const next = getNextNonAsyncSource(playerSource);
+          const next = getAnimeFallbackSource(playerSource);
           if (next) {
             setFailoverSource(epKey, next);
             setM3u8Url(null);

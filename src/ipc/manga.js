@@ -17,6 +17,28 @@ function getMangaPill() {
   return _mangaPill;
 }
 
+// Second source: ComicK (same catalogue the manhwa provider uses). MangaPill
+// ids stay the default; anything prefixed "comick:" is routed here.
+let _comick = null;
+function getComicK() {
+  if (!_comick) _comick = new MANGA.ComicK();
+  return _comick;
+}
+
+const comickResult = (r, mediaType = "manga") => ({
+  id: "comick:" + r.id,
+  rawId: r.id,
+  title: r.title,
+  name: r.title,
+  media_type: mediaType,
+  poster_path: r.image,
+  banner_path: r.image,
+  overview: `Read ${r.title} on ComicK`,
+  description: `Read ${r.title} on ComicK`,
+  status: "ongoing",
+  provider: "comick",
+});
+
 // Bounded cache (TTL + LRU + byte budget). Image entries are base64 data URLs
 // and can be hundreds of KB each, so an unbounded Map is not an option.
 const _cache = new LruCache({
@@ -206,6 +228,13 @@ function register() {
       setCache(cacheKey, results);
       return { ok: true, results };
     } catch (err) {
+      // MangaPill unreachable → fall back to ComicK so search still works.
+      try {
+        const comick = getComicK();
+        const cRes = await comick.search(query.trim());
+        const results = (cRes?.results || []).map((r) => comickResult(r));
+        if (results.length) return { ok: true, results };
+      } catch {}
       return { ok: false, error: err.message || "Failed to search MangaPill" };
     }
   });
@@ -213,6 +242,30 @@ function register() {
   // ── 3. Single Manga Details ────────────────────────────────────────────────
   ipcMain.handle("manga-pill-details", async (_, { id, title }) => {
     try {
+      if (typeof id === "string" && id.startsWith("comick:")) {
+        const slug = id.replace("comick:", "");
+        const cached = getCache("comick-details:" + slug);
+        if (cached) return { ok: true, details: cached };
+        const info = await getComicK().fetchMangaInfo(slug);
+        const details = {
+          id: "comick:" + slug,
+          rawId: slug,
+          title: info.title,
+          name: info.title,
+          media_type: "manga",
+          poster_path: info.image,
+          banner_path: info.image,
+          overview: info.description || `Read ${info.title} on ComicK`,
+          description: info.description || `Read ${info.title} on ComicK`,
+          status: info.status || "Ongoing",
+          genres: (info.genres || []).filter(Boolean),
+          releaseDate: info.releaseDate || null,
+          year: info.releaseDate ? parseInt(info.releaseDate, 10) : null,
+          provider: "comick",
+        };
+        setCache("comick-details:" + slug, details);
+        return { ok: true, details };
+      }
       const cleanId = (id || "").replace(/^mangapill:/, "");
       const cacheKey = "details:" + (cleanId || (title || "").toLowerCase());
       const cached = getCache(cacheKey);
@@ -260,6 +313,32 @@ function register() {
   // ── 4. Fetch all chapters for a manga ──────────────────────────────────────
   ipcMain.handle("manga-pill-chapters", async (_, { id, title }) => {
     try {
+      if (typeof id === "string" && id.startsWith("comick:")) {
+        const slug = id.replace("comick:", "");
+        const cached = getCache("comick-chapters:" + slug);
+        if (cached) return { ok: true, ...cached };
+        const info = await getComicK().fetchMangaInfo(slug);
+        const chapters = (info.chapters || [])
+          .filter((c) => !c.lang || c.lang === "en")
+          .map((c) => ({
+            id: "comick:" + c.id,
+            rawId: c.id,
+            chapter: c.chapterNumber || "1",
+            title: c.title
+              ? `Ch. ${c.chapterNumber} - ${c.title}`
+              : `Chapter ${c.chapterNumber}`,
+            releaseDate: c.releaseDate || "",
+            pages: 1,
+            provider: "comick",
+          }))
+          .sort((a, b) => parseFloat(a.chapter) - parseFloat(b.chapter));
+        const payload = {
+          chapters,
+          manga: { id: "comick:" + slug, title: info.title, image: info.image },
+        };
+        setCache("comick-chapters:" + slug, payload);
+        return { ok: true, ...payload };
+      }
       const cleanId = (id || "").replace(/^mangapill:/, "");
       const cacheKey = "chapters:" + (cleanId || (title || "").toLowerCase());
       const cached = getCache(cacheKey);
@@ -326,6 +405,24 @@ function register() {
   ipcMain.handle("manga-pill-pages", async (_, { chapterId }) => {
     try {
       if (!chapterId) return { ok: false, error: "Missing chapterId" };
+      if (chapterId.startsWith("comick:")) {
+        const rawComickId = chapterId.replace("comick:", "");
+        const cachedComick = getCache("pages:comick:" + rawComickId);
+        if (cachedComick) return { ok: true, pages: cachedComick };
+        const rawPages = await getComicK().fetchChapterPages(rawComickId);
+        if (!rawPages || !rawPages.length) {
+          return { ok: false, error: "No pages found for chapter on ComicK" };
+        }
+        const pages = rawPages
+          .map((p, idx) => ({
+            pageNumber: idx + 1,
+            url: p.img,
+            fallbackUrl: p.img,
+          }))
+          .filter((p) => p.url);
+        setCache("pages:comick:" + rawComickId, pages);
+        return { ok: true, pages };
+      }
       const rawId = chapterId.startsWith("mangapill:")
         ? chapterId.replace("mangapill:", "")
         : chapterId;
@@ -411,10 +508,15 @@ function register() {
 
       await assertPublicHttpUrl(url);
 
+      // Each source's CDN only accepts its own Referer.
+      const isComickImage = /comick/i.test(url);
+      const referer = isComickImage
+        ? "https://comick.art/"
+        : "https://mangapill.com/";
       const res = await axios.get(url, {
         headers: {
-          Referer: "https://mangapill.com/",
-          Origin: "https://mangapill.com",
+          Referer: referer,
+          Origin: referer.replace(/\/$/, ""),
           "User-Agent":
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         },
