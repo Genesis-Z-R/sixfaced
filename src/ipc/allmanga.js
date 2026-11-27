@@ -4,7 +4,6 @@
 // Clock/source endpoints are fetched with plain HTTPS (no CF protection).
 
 const { ipcMain } = require("electron");
-const { resolveMiruro } = require("./miruro");
 const https = require("https");
 const http = require("http");
 const crypto = require("crypto");
@@ -883,14 +882,6 @@ function register() {
         const season = seasonNumber || 1;
         const dubSub = translationType === "dub" ? "dub" : "sub";
 
-        // Miruro first: AniList-keyed watch page whose own player handles
-        // sub/dub. It returns a page URL, so the webview plays it and the
-        // normal HLS capture/download path applies.
-        const miruro = await resolveMiruro({
-          title,
-          episodeNumber,
-        }).catch(() => null);
-        if (miruro?.url) return { ...miruro, searchTitle: title };
 
 
         // 1. Check split season map

@@ -124,17 +124,6 @@ export const tmdbFetch = async (path, apiKey) => {
 // supportsProgress: true = executeJavaScript tracking works for this source
 export const PLAYER_SOURCES = [
   {
-    id: "miruro",
-    label: "Miruro",
-    tag: "ANIME",
-    note: "Sub & Dub",
-    supportsProgress: true,
-    async: true,
-    params: {},
-    movieUrl: (_id) => "https://www.miruro.bz/",
-    tvUrl: (_id, _season, _ep) => "https://www.miruro.bz/",
-  },
-  {
     id: "vidsrc",
     label: "VidSrc",
     tag: null,
@@ -537,7 +526,7 @@ export const isAnimeContent = (item, details) => {
 };
 
 // Default sources
-export const ANIME_DEFAULT_SOURCE = "miruro";
+export const ANIME_DEFAULT_SOURCE = "vidsrc_pm";
 export const NON_ANIME_DEFAULT_SOURCE = "vidsrc";
 
 // ── Episode Group fetch (localStorage + in-memory cache, 7-day TTL) ─────────
