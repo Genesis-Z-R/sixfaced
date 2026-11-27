@@ -4,6 +4,7 @@
 // Clock/source endpoints are fetched with plain HTTPS (no CF protection).
 
 const { ipcMain } = require("electron");
+const { resolveAnimeGG } = require("./animegg");
 const https = require("https");
 const http = require("http");
 const crypto = require("crypto");
@@ -881,6 +882,14 @@ function register() {
       try {
         const season = seasonNumber || 1;
         const dubSub = translationType === "dub" ? "dub" : "sub";
+
+        // AnimeGG first: independent catalogue with sub AND dub, direct MP4s.
+        const animegg = await resolveAnimeGG({
+          title,
+          episodeNumber,
+          translationType: dubSub,
+        }).catch(() => null);
+        if (animegg?.url) return { ...animegg, searchTitle: title };
 
         // 1. Check split season map
         if (!isMovie) {

@@ -124,6 +124,17 @@ export const tmdbFetch = async (path, apiKey) => {
 // supportsProgress: true = executeJavaScript tracking works for this source
 export const PLAYER_SOURCES = [
   {
+    id: "animegg",
+    label: "AnimeGG",
+    tag: "ANIME",
+    note: "Sub & Dub",
+    supportsProgress: true,
+    async: true,
+    params: {},
+    movieUrl: (_id) => "https://www.animegg.org/",
+    tvUrl: (_id, _season, _ep) => "https://www.animegg.org/",
+  },
+  {
     id: "vidsrc",
     label: "VidSrc",
     tag: null,
@@ -526,7 +537,7 @@ export const isAnimeContent = (item, details) => {
 };
 
 // Default sources
-export const ANIME_DEFAULT_SOURCE = "vidsrc_pm";
+export const ANIME_DEFAULT_SOURCE = "animegg";
 export const NON_ANIME_DEFAULT_SOURCE = "vidsrc";
 
 // ── Episode Group fetch (localStorage + in-memory cache, 7-day TTL) ─────────
