@@ -1535,6 +1535,7 @@ export default function MoviePage({
           onOpenSettings={onSettings}
           onDownloadStarted={onDownloadStarted}
           mediaId={item.id}
+          sourceId={playerSource}
           mediaType="movie"
           posterPath={d.poster_path}
           tmdbId={item.id}

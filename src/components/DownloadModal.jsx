@@ -373,6 +373,7 @@ export function SubtitleBrowser({
 export default function DownloadModal({
   onClose,
   m3u8Url,
+  sourceId = null,
   stream = null,
   subtitles = [],
   mediaName,
@@ -388,7 +389,11 @@ export default function DownloadModal({
   tmdbId,
 }) {
   const modalRef = useModalKeys(onClose);
-  const effectiveUrl = stream?.url || m3u8Url;
+  // Vidrift's stream rarely reaches the webRequest capture, so it can be
+  // resolved on demand inside the app's Chromium session.
+  const [resolvedStream, setResolvedStream] = useState(null);
+  const [resolveError, setResolveError] = useState(null);
+  const effectiveUrl = stream?.url || m3u8Url || resolvedStream?.url || null;
 
   const [downloadPath, setDownloadPath] = useState(
     () => storage.get("downloadPath") || "",
@@ -535,6 +540,24 @@ export default function DownloadModal({
     searchSubtitles(defaultLang);
   }, [effectiveUrl, subEnabled, wyzieApiKey]);
 
+  // Resolve Vidrift directly when the player capture did not yield a URL.
+  useEffect(() => {
+    if (!isElectron || !window.electron?.resolveVidrift || !tmdbId) return;
+    if (sourceId !== "vidrift" || m3u8Url || stream?.url) return;
+    let mounted = true;
+    window.electron
+      .resolveVidrift({ tmdbId, mediaType, season, episode })
+      .then((r) => {
+        if (!mounted) return;
+        if (r?.ok) setResolvedStream(r);
+        else setResolveError(r?.error || "Could not resolve the stream");
+      })
+      .catch((e) => mounted && setResolveError(e.message));
+    return () => {
+      mounted = false;
+    };
+  }, [sourceId, m3u8Url, stream, tmdbId, mediaType, season, episode]);
+
   // Ask the downloader what qualities exist and how big each one is.
   useEffect(() => {
     if (!isElectron || !effectiveUrl) return;
@@ -646,7 +669,7 @@ export default function DownloadModal({
     const result = await window.electron.runDownload({
       token: downloader.token,
       m3u8Url: effectiveUrl,
-      headers: stream?.headers || null,
+      headers: stream?.headers || (resolvedStream ? { referer: resolvedStream.referer } : null),
       capturedAt: stream?.at || null,
       pageUrl: stream?.pageUrl || null,
       formatSelector: selectedFormat || null,
@@ -813,7 +836,11 @@ export default function DownloadModal({
                 className="spinner"
                 style={{ width: 24, height: 24, borderWidth: 2 }}
               />
-              Waiting for stream URL … (start the video first)
+              {sourceId === "vidrift"
+                ? resolveError
+                  ? `Vidrift: ${resolveError}`
+                  : "Resolving the Vidrift stream…"
+                : "Waiting for stream URL … (start the video first)"}
             </div>
           )}
 

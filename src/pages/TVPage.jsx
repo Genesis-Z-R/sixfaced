@@ -2976,6 +2976,7 @@ export default function TVPage({
           onOpenSettings={onSettings}
           onDownloadStarted={onDownloadStarted}
           mediaId={item.id}
+          sourceId={playerSource}
           mediaType="tv"
           season={selectedSeason}
           episode={selectedEp?.episode_number}
