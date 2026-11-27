@@ -158,6 +158,20 @@ export const PLAYER_SOURCES = [
       `https://vidfast.vc/tv/${id}/${season}/${ep}`,
   },
   {
+    id: "vidlink",
+    label: "VidLink",
+    tag: null,
+    note: "Anime + Movies",
+    supportsProgress: true,
+    progressViaFrames: true,
+    colorParam: null,
+    langParam: null,
+    params: {},
+    movieUrl: (id) => `https://vidlink.pro/movie/${id}`,
+    tvUrl: (id, season, ep) =>
+      `https://vidlink.pro/tv/${id}/${season}/${ep}`,
+  },
+  {
     id: "vidrift",
     label: "Vidrift",
     tag: null,
@@ -267,7 +281,7 @@ export const NEEDS_INTERCEPT = ["vidsrc"];
 // Anime fallback order. AllManga's upstream API now rejects episode queries
 // (AA_CRYPTO_MISSING), and vidsrc is unreliable, so anime falls back to the
 // embed that actually serves a capturable HLS stream (vidfast) first.
-const ANIME_FALLBACK_ORDER = ["vidsrc_pm", "vidfast", "vidrift", "vidsrc", "2embed"];
+const ANIME_FALLBACK_ORDER = ["vidsrc_pm", "vidlink", "vidfast", "vidrift", "vidsrc", "2embed"];
 
 export const getAnimeFallbackSource = (currentId) => {
   const usable = ANIME_FALLBACK_ORDER.filter(
