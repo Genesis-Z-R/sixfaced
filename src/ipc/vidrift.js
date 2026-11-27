@@ -34,8 +34,14 @@ async function readFromWindow(win, timeoutMs = 14000) {
           try {
             const m = window.embedMeta;
             if (m && Array.isArray(m.orionStreams) && m.orionStreams.length) {
-              const s = m.orionStreams.find((x) => x && x.url) || m.orionStreams[0];
-              if (s && s.url) return { url: s.url, subs: s.subtitleListUrl || null };
+              const streams = m.orionStreams
+                .filter((x) => x && x.url)
+                .map((x) => ({
+                  name: String(x.name || "").replace(/^Orion\s*·\s*/, "") || "Default",
+                  url: x.url,
+                  subs: x.subtitleListUrl || null,
+                }));
+              if (streams.length) return { url: streams[0].url, streams };
             }
           } catch (e) {}
           try {
@@ -85,11 +91,15 @@ async function resolveVidrift({ tmdbId, mediaType, season, episode }) {
     if (!found?.url) {
       return { ok: false, error: "Vidrift did not expose a stream for this title" };
     }
+    const streams = (found.streams || [{ name: "Default", url: found.url }]).map(
+      (st) => ({ name: st.name, url: absolute(st.url), subs: st.subs ? absolute(st.subs) : null }),
+    );
     const value = {
       ok: true,
-      url: absolute(found.url),
+      url: streams[0].url,
+      streams,
       referer: `${BASE}/`,
-      subtitleListUrl: found.subs ? absolute(found.subs) : null,
+      subtitleListUrl: streams[0].subs || null,
     };
     if (cache.size > 60) cache.clear();
     cache.set(page, { at: Date.now(), value });

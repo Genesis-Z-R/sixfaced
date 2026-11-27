@@ -393,7 +393,12 @@ export default function DownloadModal({
   // resolved on demand inside the app's Chromium session.
   const [resolvedStream, setResolvedStream] = useState(null);
   const [resolveError, setResolveError] = useState(null);
-  const effectiveUrl = stream?.url || m3u8Url || resolvedStream?.url || null;
+  const [vidriftVersion, setVidriftVersion] = useState(0);
+  const vidriftStreams = resolvedStream?.streams || [];
+  const pickedStream =
+    vidriftStreams[vidriftVersion] || vidriftStreams[0] || resolvedStream || null;
+  const effectiveUrl =
+    stream?.url || m3u8Url || pickedStream?.url || null;
 
   const [downloadPath, setDownloadPath] = useState(
     () => storage.get("downloadPath") || "",
@@ -864,6 +869,43 @@ export default function DownloadModal({
                   </div>
                 )}
               </div>
+
+              {/* ── Vidrift version (dub is a separate stream) ───────────── */}
+              {vidriftStreams.length > 1 && (
+                <div
+                  style={{
+                    padding: "12px 20px",
+                    borderBottom: "1px solid var(--border)",
+                  }}
+                >
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>
+                    Video version
+                  </div>
+                  <select
+                    value={vidriftVersion}
+                    onChange={(e) => setVidriftVersion(Number(e.target.value))}
+                    style={{
+                      width: "100%",
+                      padding: "8px 10px",
+                      background: "var(--surface2)",
+                      border: "1px solid var(--border)",
+                      borderRadius: 8,
+                      color: "var(--text)",
+                      fontSize: 13,
+                    }}
+                  >
+                    {vidriftStreams.map((st, i) => (
+                      <option key={`${st.name}-${i}`} value={i}>
+                        {st.name}
+                      </option>
+                    ))}
+                  </select>
+                  <div style={{ marginTop: 6, fontSize: 11, color: "var(--text3)" }}>
+                    Vidrift ships each language as its own video, so pick the
+                    one you want to download.
+                  </div>
+                </div>
+              )}
 
               {/* ── Quality / size ───────────────────────────────────────── */}
               <div
