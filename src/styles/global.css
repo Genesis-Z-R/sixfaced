@@ -5483,3 +5483,88 @@ html[data-win-titlebar][data-maximized] .main {
 .download-modal .btn {
     letter-spacing: 0;
 }
+
+/* ── Media cards ───────────────────────────────────────────────────────────
+   Same structure, calmer hover: depth instead of a red glow, the poster
+   pushes in slightly, and a bottom scrim keeps titles readable. */
+
+.card {
+    border-radius: var(--radius-lg);
+    border-color: color-mix(in srgb, var(--border) 90%, transparent);
+    transition:
+        transform 0.22s var(--ease),
+        border-color 0.22s,
+        box-shadow 0.22s,
+        background 0.22s;
+}
+
+.card:hover {
+    transform: translateY(-6px);
+    border-color: color-mix(in srgb, var(--text3) 35%, var(--border));
+    box-shadow: 0 18px 40px rgba(0, 0, 0, 0.55);
+}
+
+.card-poster img {
+    transition:
+        transform 0.45s var(--ease),
+        filter 0.3s;
+}
+
+.card:hover .card-poster img {
+    transform: scale(1.06);
+}
+
+.card-poster::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    height: 55%;
+    background: linear-gradient(to top, rgba(0, 0, 0, 0.55), transparent);
+    opacity: 0.85;
+    pointer-events: none;
+    transition: opacity 0.3s;
+}
+
+.card:hover .card-poster::after {
+    opacity: 1;
+}
+
+.card-play {
+    transform: scale(0.85);
+    transition:
+        transform 0.28s var(--ease),
+        opacity 0.28s;
+}
+
+.card:hover .card-play {
+    transform: scale(1);
+}
+
+.card-info {
+    padding: 12px 12px 14px;
+}
+
+.card-title {
+    letter-spacing: 0.1px;
+}
+
+.card-progress {
+    height: 3px;
+    border-radius: 999px;
+}
+
+.card-progress-fill {
+    background: linear-gradient(90deg, var(--red), var(--red2));
+}
+
+.card-watched-badge {
+    border-radius: 999px;
+    backdrop-filter: blur(6px);
+}
+
+.card:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--red) 70%, transparent);
+    outline-offset: 3px;
+}
